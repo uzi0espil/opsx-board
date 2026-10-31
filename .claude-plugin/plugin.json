@@ -1,0 +1,21 @@
+{
+  "name": "openspec-board",
+  "version": "0.1.0",
+  "description": "Live pane for the OpenSpec lifecycle of a change: stages, task groups, agents, and tokens.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "shadow runs beside the opsx-board mod: it reads the progress calls of opsx-board, opens only on /openspec-board, and shows no toast or status line. primary runs alone.",
+      "options": ["shadow", "primary"],
+      "default": "shadow"
+    },
+    "reportTool": {
+      "type": "boolean",
+      "title": "Progress report tool",
+      "description": "In primary mode, ask /opsx:apply agents to report the task they work on, for task-level progress.",
+      "default": true
+    }
+  }
+}

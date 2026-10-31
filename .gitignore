@@ -1,0 +1,7 @@
+.claude-plugin/types/
+node_modules/
+
+# Kept local: project-specific hints and the comparison with the earlier board.
+examples/
+scripts/
+.idea/
