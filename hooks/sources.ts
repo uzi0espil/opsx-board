@@ -409,16 +409,40 @@ export async function fetchPullRequest($: Engine, cwd: string, branch: string, w
 }
 
 /**
- * The pull request that merged an archived change: the squash commit that added its archive
- * folder names it as `(#N)`, and `gh` gives that pull request's URL.
+ * The pull request of a branch whose own commits hold a commit. A branch can carry the commits
+ * of more than one change, so the commit must be one of the pull request's own.
  */
-async function mergedPullRequest($: Engine, cwd: string, archivedAs: string): Promise<PullRequest | undefined> {
-  const path = `openspec/changes/archive/${archivedAs}`
-  const log = await run($, ['git', 'log', '-1', '--diff-filter=A', '--format=%s', '--', path], cwd)
-  // The last `(#N)` of the subject; a `[skip ci]` may follow it.
-  const number = [...(log?.stdout ?? '').matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
-  if (number === undefined) {
+async function branchPullRequest($: Engine, cwd: string, branch: string, hash: string): Promise<PullRequest | undefined> {
+  if (branch === 'main' || branch === 'HEAD') {
     return undefined
+  }
+  const argv = ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,url,commits', '--limit', '1']
+  const ran = await run($, argv, cwd)
+  try {
+    const found = ran?.exitCode === 0 ? (JSON.parse(ran.stdout) as (PullRequest & { commits?: { oid?: unknown }[] })[])[0] : undefined
+
+    return found !== undefined && (found.commits ?? []).some(commit => commit.oid === hash)
+      ? { number: found.number, state: found.state, url: found.url }
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The pull request that merged an archived change: the squash commit that added its archive
+ * folder names it as `(#N)`, and `gh` gives that pull request's URL. In a checkout of the
+ * change's own branch, the commit that added the folder has no number: the pull request of
+ * the branch counts when its commits hold that commit.
+ */
+async function mergedPullRequest($: Engine, cwd: string, archivedAs: string, branch: string | undefined): Promise<PullRequest | undefined> {
+  const path = `openspec/changes/archive/${archivedAs}`
+  const log = await run($, ['git', 'log', '-1', '--diff-filter=A', '--format=%H%x09%s', '--', path], cwd)
+  const [hash = '', subject = ''] = (log?.exitCode === 0 ? log.stdout.trim() : '').split('\t')
+  // The last `(#N)` of the subject; a `[skip ci]` may follow it.
+  const number = [...subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
+  if (number === undefined) {
+    return branch === undefined || !/^[0-9a-f]{40}$/.test(hash) ? undefined : branchPullRequest($, cwd, branch, hash)
   }
   const ran = await run($, ['gh', 'pr', 'view', number, '--json', 'number,state,url'], cwd)
   try {
@@ -456,7 +480,7 @@ export async function collectGit(
     pr = (await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)) ?? pr
   }
   if (isGhMissing !== true && archivedAs !== undefined && pr === undefined && isGitDue) {
-    pr = await mergedPullRequest($, cwd, archivedAs)
+    pr = await mergedPullRequest($, cwd, archivedAs, branch)
   }
 
   return { branch, commits, pr, isGhMissing }

@@ -117,10 +117,18 @@ const ISSUE_URL = new RegExp(`https://github\\.com/(${REPO})/issues/(\\d{1,9})(?
 // `#12-notes`, or an HTML entity.
 const ISSUE_REF = new RegExp(`(?<![\\w/#&.-])(?:(${REPO}))?#(\\d{1,9})(?![\\w-])`, 'g')
 
+// A number after "PR" or "pull request" names a pull request, not an issue.
+const AFTER_PULL_REQUEST = /\b(?:PRs?|pull requests?|MRs?|merge requests?)\s*$/i
+// A list item: a bullet, a checkbox item, or a numbered item.
+const LIST_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+/
+
 /** The id the board shows for an issue: `#12`, or `owner/name#12` for another repository. */
 export const issueId = (ref: IssueRef): string => `${ref.repo ?? ''}#${ref.number}`
 
-/** The GitHub issues a line names, in their order: issue URLs, `owner/name#12`, and `#12`. */
+/**
+ * The GitHub issues a line names, in their order: issue URLs, `owner/name#12`, and `#12`. A
+ * number after "PR" or "pull request" does not count.
+ */
 export const issueRefs = (text: string): IssueRef[] => {
   const found: { at: number; ref: IssueRef }[] = []
   const rest = text.replace(ISSUE_URL, (match, repo: string, number: string, at: number) => {
@@ -130,8 +138,9 @@ export const issueRefs = (text: string): IssueRef[] => {
   })
   for (const match of rest.matchAll(ISSUE_REF)) {
     const repo = match[1]
-    if (repo === undefined || isRepoName(repo)) {
-      found.push({ at: match.index ?? 0, ref: { repo, number: Number(match[2]) } })
+    const at = match.index ?? 0
+    if ((repo === undefined || isRepoName(repo)) && !AFTER_PULL_REQUEST.test(rest.slice(Math.max(0, at - 24), at))) {
+      found.push({ at, ref: { repo, number: Number(match[2]) } })
     }
   }
   const seen = new Set<string>()
@@ -164,7 +173,8 @@ const issueTitle = (line: string, refs: number): string =>
 /**
  * The work items a proposal names in its planning section: each checkbox line whose bold text
  * starts with an ID of one of the sources, and a `None — <reason>` line. With a GitHub source,
- * each other line gives the issues it names; their state comes from `gh` later.
+ * each other list item gives the issues it names; their state comes from `gh` later. Prose
+ * lines name no issue: they mention pull requests and earlier work.
  */
 export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningItem[]; none?: string } => {
   const body = section(md, sectionHeading(hints.section))
@@ -194,7 +204,7 @@ export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningIt
       none = empty[1] ?? ''
       continue
     }
-    const refs = hints.github === undefined ? [] : issueRefs(line)
+    const refs = hints.github === undefined || !LIST_LINE.test(line) ? [] : issueRefs(line)
     for (const ref of refs.filter(item => !issues.has(issueId(item)))) {
       issues.add(issueId(ref))
       items.push({ id: issueId(ref), title: issueTitle(line, refs.length), issue: { ...ref, via: 'proposal' } })

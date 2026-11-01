@@ -157,7 +157,9 @@ The stages come from OpenSpec:
   checks, and the archive folder. The tasks come from the files that `apply.tracks` of the
   schema names, a path or a glob in the change folder. A schema without `apply.tracks` tracks no
   tasks, as the CLI does.
-- **PR** comes from `gh`. Without `gh`, the board shows no PR stage.
+- **PR** comes from `gh`. Without `gh`, the board shows no PR stage. An archived change finds
+  the pull request that its squash commit names. In a checkout of the change's own branch, it
+  finds the pull request of the branch whose commits hold the archive commit.
 
 A `board.yaml` adds what OpenSpec does not know. The board reads the first one it finds:
 
@@ -243,7 +245,9 @@ refs:
 
 The board finds the issues of a change in three places, and shows each issue once:
 
-1. The proposal section of the stage: each `#12`, `owner/name#12`, and issue URL in it.
+1. The proposal section of the stage: each `#12`, `owner/name#12`, and issue URL on a list
+   line of it. A prose line names no issue, and a number after "PR" or "pull request" names a
+   pull request.
 2. The branch name: the first group of the `branch` pattern, such as `12` in `12-csv-export`.
 3. The pull request of the branch: the issues it closes. Set `pr: false` to leave them out.
 

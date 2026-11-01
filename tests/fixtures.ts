@@ -338,6 +338,9 @@ People want their library in a spreadsheet.
 - #12 CSV export
 - Needs the upstream fix https://github.com/other/lib/issues/7
 - See #12 again, and the heading anchor [notes](#13-notes)
+- Builds on pull request #226 and PR #85
+
+The design of #90 comes later.
 
 ## Impact
 

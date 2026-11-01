@@ -22,6 +22,7 @@ import {
 } from './fixtures'
 
 const CWD = '/repo'
+const ARCHIVE_HASH = 'c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00'
 const CHANGE = `${CWD}/openspec/changes/demo-change`
 
 // The board alone, as it runs once the opsx-board mod is gone. The shadow tests use the default.
@@ -63,6 +64,8 @@ type World = {
   isGhMissing: boolean
   /** What `gh issue view` gives, by `<repo>#<N>`; a string fails with that stderr. */
   issues: Record<string, object | string>
+  /** The commit (`%H<tab>%s`) that added the archive folder of csv-import. */
+  archiveLog: string
 }
 
 // The engine hands a hook the path as the host resolves it (`C:\repo\...` on Windows).
@@ -93,6 +96,7 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     status: { 'demo-change': STATUS_JSON },
     isGhMissing: false,
     issues: GITHUB_ISSUES,
+    archiveLog: `${ARCHIVE_HASH}\tfeat(import): CSV import of a library (WI-7) (#226) [skip ci]\n`,
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -213,8 +217,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     if (command.startsWith('xdg-open ')) {
       return ran('')
     }
-    if (command === 'git log -1 --diff-filter=A --format=%s -- openspec/changes/archive/2026-10-22-csv-import') {
-      return ran('feat(import): CSV import of a library (WI-7) (#226) [skip ci]\n')
+    if (command === 'git log -1 --diff-filter=A --format=%H%x09%s -- openspec/changes/archive/2026-10-22-csv-import') {
+      return ran(state.archiveLog)
     }
     if (command === 'gh pr view 226 --json number,state,url') {
       return ran('{"number":226,"state":"MERGED","url":"https://github.com/o/r/pull/226"}')
@@ -642,6 +646,38 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
+  test("an archived change seen from its own branch: the branch's pull request, when its commits hold the archive commit", PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'csv-import')
+    // On the branch, the commit that archived the change has no pull request number yet.
+    state.archiveLog = `${ARCHIVE_HASH}\tdocs(csv-import): archive change\n`
+    state.prs = JSON.stringify([{ number: 230, state: 'MERGED', url: 'https://github.com/o/r/pull/230', commits: [{ oid: 'a1' }, { oid: ARCHIVE_HASH }] }])
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('openspec-board', 'csv-import'))
+    await clock.advance(300)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ key: 'pr' }))?.text).toContain('#230 merged')
+    expect(state.runs).toContain('gh pr list --head csv-import --state all --json number,state,url,commits --limit 1')
+    await board.unmount()
+  })
+
+  test('an archived change keeps no pull request of its branch that does not hold its archive commit', PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    // A branch of another change: an older change archived by a commit without a number.
+    const state = world(on, DEMO_FILES, 'worktree-demo-change')
+    state.archiveLog = `${ARCHIVE_HASH}\tdocs(csv-import): archive change\n`
+    state.prs = JSON.stringify([{ number: 231, state: 'OPEN', url: 'https://github.com/o/r/pull/231', commits: [{ oid: 'b2' }] }])
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('openspec-board', 'csv-import'))
+    await clock.advance(300)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  PR › ✔  Archive')
+    expect((await board.find({ key: 'pr' }))?.text).not.toContain('#231')
+    await board.unmount()
+  })
+
   test('a change name that is not kebab-case never reaches a command line or a ledger path', PRIMARY, async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = { ...DEMO_FILES, [`${CWD}/openspec/changes/x&calc/proposal.md`]: '## Why\n' }
@@ -904,8 +940,10 @@ describe('openspec-board with GitHub issues', () => {
       '[x] #34  Streaming writer · branch',
       '[-] #40  Excel export · closed by the PR',
     ])
-    // A heading anchor such as #13-notes names no issue.
-    expect(await ui.find({ key: 'plan:#13' })).toBeUndefined()
+    // A heading anchor, a pull request number, and a prose line name no issue.
+    for (const id of ['#13', '#226', '#85', '#90']) {
+      expect(await ui.find({ key: `plan:${id}` })).toBeUndefined()
+    }
     // The pull request gives the home repository, so a bare #N names it; another one keeps its
     // name. Before the pull request is known, gh resolves a bare #N from the working directory.
     expect(issueRuns(state)).toContain('gh issue view 12 --json number,title,state,stateReason,url')

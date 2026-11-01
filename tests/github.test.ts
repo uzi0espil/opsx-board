@@ -16,6 +16,10 @@ describe('GitHub issues', () => {
     for (const text of ['## 12. Group', 'a#12', 'docs/a/b#3', '[notes](#13-notes)', '&#123;', 'https://github.com/o/r/pull/9', '#0']) {
       expect(issueRefs(text)).toEqual([])
     }
+    // Neither does a number after "PR" or "pull request".
+    expect(issueRefs('PR #85, PR#86, PRs #3, pull request #226, operator pull request o/r#10, MR !4 and merge request #5; closes #12')).toEqual([
+      { number: 12 },
+    ])
   })
 
   test('the issue a branch name holds, by the branch pattern', async () => {
