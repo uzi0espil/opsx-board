@@ -153,7 +153,7 @@ async function homeDir($: Engine): Promise<string | undefined> {
 export async function userHintsPath($: Engine, schema: string): Promise<string | undefined> {
   const home = await homeDir($)
 
-  return home === undefined || !isSchemaName(schema) ? undefined : `${home}/.claude/openspec-board/schemas/${schema}/board.yaml`
+  return home === undefined || !isSchemaName(schema) ? undefined : `${home}/.claude/opsx-board/schemas/${schema}/board.yaml`
 }
 
 /**

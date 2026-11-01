@@ -1,4 +1,4 @@
-// openspec-board: a live pane for the OpenSpec lifecycle of the change this session works on.
+// opsx-board: a live pane for the OpenSpec lifecycle of the change this session works on.
 // It observes the workflow (CLI JSON, files, git, session events) and changes no workflow file.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderInput, Register } from 'claude-code'
@@ -67,28 +67,26 @@ import { PANE, renderPane, renderReader } from './view'
 type Engine = EngineInterface
 
 // The session values the pane draws from, each declared in ../types/index.d.ts.
-const bindingAtom = atom({ plugin: 'openspec-board', key: 'binding' } as const, { candidates: [] } as Binding)
-const snapshotAtom = atom({ plugin: 'openspec-board', key: 'snapshot' } as const, null as Snapshot | null)
-const liveAtom = atom({ plugin: 'openspec-board', key: 'live' } as const, { designRuns: [] } as Live)
-const agentsAtom = atom({ plugin: 'openspec-board', key: 'agents' } as const, [] as AgentRun[])
-const mainAtom = atom({ plugin: 'openspec-board', key: 'main' } as const, {} as MainUsage)
-const reportsAtom = atom({ plugin: 'openspec-board', key: 'reports' } as const, [] as Report[])
+const bindingAtom = atom({ plugin: 'opsx-board', key: 'binding' } as const, { candidates: [] } as Binding)
+const snapshotAtom = atom({ plugin: 'opsx-board', key: 'snapshot' } as const, null as Snapshot | null)
+const liveAtom = atom({ plugin: 'opsx-board', key: 'live' } as const, { designRuns: [] } as Live)
+const agentsAtom = atom({ plugin: 'opsx-board', key: 'agents' } as const, [] as AgentRun[])
+const mainAtom = atom({ plugin: 'opsx-board', key: 'main' } as const, {} as MainUsage)
+const reportsAtom = atom({ plugin: 'opsx-board', key: 'reports' } as const, [] as Report[])
 const othersAtom = atom(
-  { plugin: 'openspec-board', key: 'others' } as const,
+  { plugin: 'opsx-board', key: 'others' } as const,
   { usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, sessions: 0, activeChanges: [] } as Others,
 )
-const figuresAtom = atom({ plugin: 'openspec-board', key: 'figures' } as const, {} as SessionFigures)
-const foldedAtom = atom({ plugin: 'openspec-board', key: 'folded' } as const, {} as Flags)
-const expandedAtom = atom({ plugin: 'openspec-board', key: 'expanded' } as const, {} as Flags)
-const readerAtom = atom({ plugin: 'openspec-board', key: 'reader' } as const, null as ReaderDoc | null)
-const hintsAtom = atom({ plugin: 'openspec-board', key: 'hints' } as const, null as BoardHints | null)
+const figuresAtom = atom({ plugin: 'opsx-board', key: 'figures' } as const, {} as SessionFigures)
+const foldedAtom = atom({ plugin: 'opsx-board', key: 'folded' } as const, {} as Flags)
+const expandedAtom = atom({ plugin: 'opsx-board', key: 'expanded' } as const, {} as Flags)
+const readerAtom = atom({ plugin: 'opsx-board', key: 'reader' } as const, null as ReaderDoc | null)
+const hintsAtom = atom({ plugin: 'opsx-board', key: 'hints' } as const, null as BoardHints | null)
 
 const TITLE = 'OpenSpec board'
-const COMMAND = 'openspec-board'
+const COMMAND = 'opsx-board'
 const TOOL = 'progress'
-const TOOL_NAME = 'mcp__openspec-board__progress'
-// In shadow mode the opsx-board mod owns the progress tool; this plugin reads its calls.
-const SHADOWED_TOOL = 'mcp__opsx-board__progress'
+const TOOL_NAME = 'mcp__opsx-board__progress'
 const TICK_MS = 4000
 const GIT_MS = 30_000
 const PR_MS = 60_000
@@ -99,9 +97,6 @@ const NO_REPORT = ['Explore', 'Plan', 'claude-code-guide', 'statusline-setup']
 const EDIT_TOOLS = ['Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell'] as const
 
 // Module variables start over on a hot reload; register and session.start run again then.
-// Shadow mode runs beside the opsx-board mod: no tool and no prompt note of its own, no pane
-// that opens by itself, no toast, and no status line, so the two never show a thing twice.
-let isShadow = true
 let isReportTool = false
 let cwd = ''
 let sessionId = ''
@@ -119,7 +114,7 @@ let lastCommandKey = ''
 
 const applyNote = (change: string) => `
 
-## Progress display (openspec-board)
+## Progress display (opsx-board)
 
 A status pane shows this run. While you implement OpenSpec change \`${change}\`:
 - Before you start a task that you run yourself (for example group 0 or the Verification group), call \`${TOOL_NAME}\` with \`{"change": "${change}", "group": "<N>", "task": "<N.M>", "state": "start"}\`, and call it with \`"state": "done"\` after the task.
@@ -128,7 +123,7 @@ The tool only updates the display. It returns "ok" and changes no file.`
 
 const subagentNote = (change: string) => `
 
-[openspec-board] While you work on OpenSpec change "${change}": before each task, call the tool ${TOOL_NAME} with {"change": "${change}", "group": "<N>", "task": "<N.M>", "state": "start"}, and after it, call the tool again with "state": "done". If you are blocked, use "state": "blocked" and a short "note". The tool only updates a status display and returns "ok".`
+[opsx-board] While you work on OpenSpec change "${change}": before each task, call the tool ${TOOL_NAME} with {"change": "${change}", "group": "<N>", "task": "<N.M>", "state": "start"}, and after it, call the tool again with "state": "done". If you are blocked, use "state": "blocked" and a short "note". The tool only updates a status display and returns "ok".`
 
 async function sessionCwd($: Engine): Promise<string> {
   cwd ||= await $.session.cwd()
@@ -171,9 +166,6 @@ async function currentPhase($: Engine): Promise<Phase> {
 }
 
 async function showStatus($: Engine): Promise<void> {
-  if (isShadow) {
-    return
-  }
   const [snap, live, agents, reports, binding] = await Promise.all([
     read($, snapshotAtom),
     read($, liveAtom),
@@ -189,18 +181,13 @@ async function showStatus($: Engine): Promise<void> {
   $.ui.status(statusLine(shown, stages, groupViews(shown, own, reports, live, hints), live))
 }
 
-/** A toast about the workflow. A toast that answers a press of the person shows in both modes. */
+/** A toast about the workflow. */
 function notify($: Engine, text: string): void {
-  if (!isShadow) {
-    $.ui.toast(text)
-  }
+  $.ui.toast(text)
 }
 
-/** Opens the pane by itself, on a workflow command. Shadow mode opens it only on its own command. */
+/** Opens the pane by itself, on a workflow command, unless the person closed it for this change. */
 async function openPane($: Engine): Promise<void> {
-  if (isShadow) {
-    return
-  }
   const binding = await read($, bindingAtom)
   if (binding.dismissedFor !== undefined && binding.dismissedFor === (binding.change ?? PRE_CHANGE)) {
     return
@@ -512,7 +499,7 @@ async function startSession($: Engine, dir: string): Promise<void> {
     await $.tool.register({
       name: TOOL,
       description:
-        'Report OpenSpec task progress to the openspec-board status pane. Call it with state "start" before a task of an OpenSpec change and "done" after it. It only updates a display and returns "ok".',
+        'Report OpenSpec task progress to the opsx-board status pane. Call it with state "start" before a task of an OpenSpec change and "done" after it. It only updates a display and returns "ok".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -976,8 +963,7 @@ async function applyNoteFor($: Engine): Promise<string | undefined> {
 }
 
 export const register: Register = (on, options) => {
-  isShadow = options['mode'] !== 'primary'
-  isReportTool = !isShadow && options['reportTool'] !== false
+  isReportTool = options['reportTool'] !== false
 
   on('session.start', async ($, e, next) => {
     await startSession($, e.cwd)
@@ -1035,20 +1021,10 @@ export const register: Register = (on, options) => {
   })
 
   // Each model request, the main loop's or a subagent's: its tokens count when it ends.
-  // In shadow mode its tool calls also carry the progress reports of the opsx-board mod. The
-  // step result reaches every plugin in the chain, while the tool call stops at the plugin that
-  // answers it, so the reports are read here and not at `tool.call`.
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
     if (result.usage !== null) {
       await noteStep($, e.turnId, e.agentId, fromModelUsage(result.usage))
-    }
-    if (isShadow) {
-      for (const use of result.toolUses) {
-        if (use.name === SHADOWED_TOOL && typeof use.input === 'object' && use.input !== null) {
-          await noteProgress($, { ...(use.input as ProgressInput), agentId: e.agentId })
-        }
-      }
     }
 
     return result

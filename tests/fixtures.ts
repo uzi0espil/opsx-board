@@ -253,7 +253,7 @@ export const SPEC_DRIVEN_STATUS_JSON = {
 }
 
 // The board.yaml of the demo project: every part the board reads.
-export const DEMO_BOARD_YAML = String.raw`# openspec-board hints for the gated-spec-driven schema of a demo project.
+export const DEMO_BOARD_YAML = String.raw`# opsx-board hints for the gated-spec-driven schema of a demo project.
 version: 1
 
 stages:

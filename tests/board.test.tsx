@@ -25,13 +25,11 @@ const CWD = '/repo'
 const ARCHIVE_HASH = 'c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00'
 const CHANGE = `${CWD}/openspec/changes/demo-change`
 
-// The board alone, as it runs once the opsx-board mod is gone. The shadow tests use the default.
-const PRIMARY = { options: { mode: 'primary' } }
 
 const PANE = {
-  plugin: 'openspec-board',
+  plugin: 'opsx-board',
   component: 'Pane',
-  requestId: 'openspec-board',
+  requestId: 'opsx-board',
   props: {
     title: 'OpenSpec board',
     isFocused: false,
@@ -77,7 +75,7 @@ const norm = (path: string): string =>
 
 const dirEntry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 1, mtimeMs: 1, isLink: false })
 
-/** A repository in memory, the openspec and git CLIs, and the engine calls the mod makes. */
+/** A repository in memory, the openspec and git CLIs, and the engine calls the board makes. */
 function world(on: On, files: Record<string, string>, branch = 'worktree-demo-change'): World {
   const state: World = {
     files: new Map(Object.entries(files).map(([path, text]) => [norm(path), text])),
@@ -117,11 +115,11 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'sess-1' }))
   on('session.id', () => ({ value: 'sess-1' }))
-  on('command.register', () => ({ value: { command: 'openspec-board' } }))
+  on('command.register', () => ({ value: { command: 'opsx-board' } }))
   on('tool.register', (_, e) => {
     state.tools.push(e.name)
 
-    return { value: { tool: `mcp__openspec-board__${e.name}` } }
+    return { value: { tool: `mcp__opsx-board__${e.name}` } }
   })
   on('ui.open', (_, e) => {
     state.opened.push(e.id)
@@ -273,8 +271,8 @@ const spawn = (subagentType: string, description: string, prompt: string) => ({
   fork: false,
 })
 
-describe('openspec-board', () => {
-  test('the pane shows the stages, the design update, and the task groups', PRIMARY, async ($, on) => {
+describe('opsx-board', () => {
+  test('the pane shows the stages, the design update, and the task groups', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     world(on, DEMO_FILES)
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
@@ -303,7 +301,7 @@ describe('openspec-board', () => {
     }
   })
 
-  test('a running group shows its agent, its tokens, and the reported task; the row folds, the agent cell opens the agent', PRIMARY, async ($, on) => {
+  test('a running group shows its agent, its tokens, and the reported task; the row folds, the agent cell opens the agent', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
     on('command.run', () => ({ text: '' }))
@@ -329,15 +327,15 @@ describe('openspec-board', () => {
     await clock.advance(300)
     // The main agent's progress note rides on the command as hidden context.
     const applied = await $.command.run(typed('opsx:apply', 'demo-change'))
-    expect(applied.context?.at(-1)).toContain('call `mcp__openspec-board__progress`')
+    expect(applied.context?.at(-1)).toContain('call `mcp__opsx-board__progress`')
     expect(applied.context?.at(-1)).toContain('OpenSpec change `demo-change`')
     await clock.advance(300)
 
     await $.agent.spawn(
       spawn('general-purpose', 'Implement group 2', 'Implement task group 2 of demo-change: the CSV writer in `export-service`.'),
     )
-    expect(spawnedPrompt).toContain('mcp__openspec-board__progress')
-    await $.tool.call({ tool: 'mcp__openspec-board__progress', group: '2', task: '2.2', state: 'start', agentId: 'agent-2' })
+    expect(spawnedPrompt).toContain('mcp__opsx-board__progress')
+    await $.tool.call({ tool: 'mcp__opsx-board__progress', group: '2', task: '2.2', state: 'start', agentId: 'agent-2' })
     await clock.advance(1000)
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -407,7 +405,7 @@ describe('openspec-board', () => {
     await ui.unmount()
   })
 
-  test('a main-loop turn counts under the phase, and the ledger file is per session', PRIMARY, async ($, on) => {
+  test('a main-loop turn counts under the phase, and the ledger file is per session', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
     on('turn.complete', () => ({ text: '' }))
@@ -422,12 +420,12 @@ describe('openspec-board', () => {
       reason: 'answer',
     })
     await clock.advance(6000)
-    const ledger = state.writes.get('/home/me/.claude/openspec-board/ledgers/demo-change/sess-1.json')
+    const ledger = state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json')
     expect(ledger).toBeDefined()
     expect(JSON.parse(ledger ?? '{}').main).toEqual({ apply: { input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 } })
   })
 
-  test('the spec-reviewer report becomes finding counts', PRIMARY, async ($, on) => {
+  test('the spec-reviewer report becomes finding counts', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
     on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'review-1' }))
@@ -445,7 +443,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test('design mode before any change, then the proposal takes over the tokens', PRIMARY, async ($, on) => {
+  test('design mode before any change, then the proposal takes over the tokens', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = Object.fromEntries(Object.entries(DEMO_FILES).filter(([path]) => !path.startsWith(CHANGE)))
     const state = world(on, files)
@@ -470,11 +468,11 @@ describe('openspec-board', () => {
     }
     await $.command.run(typed('opsx:propose', 'demo-change'))
     await clock.advance(6000)
-    const ledger = JSON.parse(state.writes.get('/home/me/.claude/openspec-board/ledgers/demo-change/sess-1.json') ?? '{}')
+    const ledger = JSON.parse(state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json') ?? '{}')
     expect(ledger.main?.design).toEqual({ input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 })
   })
 
-  test('Propose and Design stay in review until the next step starts', PRIMARY, async ($, on) => {
+  test('Propose and Design stay in review until the next step starts', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, {
       ...DEMO_FILES,
@@ -489,7 +487,7 @@ describe('openspec-board', () => {
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     const rail = async () => (await ui.find({ type: 'Text', text: /Plan .* Archive/ }))?.text
     const why = async () => (await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text
@@ -536,14 +534,14 @@ describe('openspec-board', () => {
     await ui.unmount()
   })
 
-  test('a task left [~] does not hold back the archive after the pull request', PRIMARY, async ($, on) => {
+  test('a task left [~] does not hold back the archive after the pull request', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     world(on, { ...DEMO_FILES, [`${CHANGE}/tasks.md`]: TASKS_MD.replace(/- \[ \]/g, '- [x]') })
     on('command.run', () => ({ text: '' }))
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     await $.command.run(typed('opsx:apply', 'demo-change'))
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     // Task 1.2 stays [~] for the owner, and the pull request exists: the run is over.
@@ -552,7 +550,7 @@ describe('openspec-board', () => {
     await ui.unmount()
   })
 
-  test('rows open their target: artifacts and planning items in the reader, the design and the PR in the browser', PRIMARY, async ($, on) => {
+  test('rows open their target: artifacts and planning items in the reader, the design and the PR in the browser', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = { ...DEMO_FILES, [`${CHANGE}/specs/csv-export/spec.md`]: '## ADDED Requirements\n\n### Requirement: CSV export\n' }
     const state = world(on, files)
@@ -565,7 +563,7 @@ describe('openspec-board', () => {
     await board.press({ key: 'artifact:proposal' })
     // The reader is a view of the board pane, not a pane of its own: no tab can hide it, and
     // no width floor of an unasked pane can hold it back.
-    expect(state.opened.filter(id => id !== 'openspec-board')).toEqual([])
+    expect(state.opened.filter(id => id !== 'opsx-board')).toEqual([])
     expect((await board.find({ key: 'doc' }))?.text).toContain('## Planning Items')
     expect((await board.find({ type: 'Text', text: /proposal\.md$/ }))?.text).toContain('/repo/openspec/changes/demo-change/proposal.md')
     expect(await board.find({ key: 'artifact:tasks' })).toBeUndefined()
@@ -603,7 +601,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test('the reader view leaves the board after a close or the board command', PRIMARY, async ($, on) => {
+  test('the reader view leaves the board after a close or the board command', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
@@ -616,27 +614,27 @@ describe('openspec-board', () => {
       expect((await board.find({ key: 'doc' }))?.text).toContain('## Planning Items')
       // The pane closes while it shows a document: it opens on the board again.
       // (A test cannot raise the person's own close; that path clears the reader as this one does.)
-      await $.command.run(typed('openspec-board', 'close'))
-      expect(state.closed.at(-1)).toBe('openspec-board')
+      await $.command.run(typed('opsx-board', 'close'))
+      expect(state.closed.at(-1)).toBe('opsx-board')
       expect(await board.find({ key: 'doc' })).toBeUndefined()
       expect(await board.find({ key: 'artifact:proposal' })).toBeDefined()
 
       // The board command shows the board, also from the reader view.
       await board.press({ key: 'artifact:proposal' })
       expect((await board.find({ key: 'doc' }))?.text).toContain('## Planning Items')
-      await $.command.run(typed('openspec-board', ''))
+      await $.command.run(typed('opsx-board', ''))
       expect(await board.find({ key: 'doc' })).toBeUndefined()
       await board.press({ key: 'fold:propose' })
       await board.unmount()
     }
   })
 
-  test('a pinned archived change finds the pull request that merged it', PRIMARY, async ($, on) => {
+  test('a pinned archived change finds the pull request that merged it', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES, 'main')
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
-    await $.command.run(typed('openspec-board', 'csv-import'))
+    await $.command.run(typed('opsx-board', 'csv-import'))
     await clock.advance(300)
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  PR › ✔  Archive')
@@ -646,7 +644,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test("an archived change seen from its own branch: the branch's pull request, when its commits hold the archive commit", PRIMARY, async ($, on) => {
+  test("an archived change seen from its own branch: the branch's pull request, when its commits hold the archive commit", async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES, 'csv-import')
     // On the branch, the commit that archived the change has no pull request number yet.
@@ -654,7 +652,7 @@ describe('openspec-board', () => {
     state.prs = JSON.stringify([{ number: 230, state: 'MERGED', url: 'https://github.com/o/r/pull/230', commits: [{ oid: 'a1' }, { oid: ARCHIVE_HASH }] }])
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
-    await $.command.run(typed('openspec-board', 'csv-import'))
+    await $.command.run(typed('opsx-board', 'csv-import'))
     await clock.advance(300)
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ key: 'pr' }))?.text).toContain('#230 merged')
@@ -662,7 +660,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test('an archived change keeps no pull request of its branch that does not hold its archive commit', PRIMARY, async ($, on) => {
+  test('an archived change keeps no pull request of its branch that does not hold its archive commit', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     // A branch of another change: an older change archived by a commit without a number.
     const state = world(on, DEMO_FILES, 'worktree-demo-change')
@@ -670,7 +668,7 @@ describe('openspec-board', () => {
     state.prs = JSON.stringify([{ number: 231, state: 'OPEN', url: 'https://github.com/o/r/pull/231', commits: [{ oid: 'b2' }] }])
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
-    await $.command.run(typed('openspec-board', 'csv-import'))
+    await $.command.run(typed('opsx-board', 'csv-import'))
     await clock.advance(300)
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  PR › ✔  Archive')
@@ -678,7 +676,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test('a change name that is not kebab-case never reaches a command line or a ledger path', PRIMARY, async ($, on) => {
+  test('a change name that is not kebab-case never reaches a command line or a ledger path', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = { ...DEMO_FILES, [`${CWD}/openspec/changes/x&calc/proposal.md`]: '## Why\n' }
     const state = world(on, files)
@@ -689,14 +687,14 @@ describe('openspec-board', () => {
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /^demo-change$/ }))?.text).toBe('demo-change')
     await board.unmount()
-    expect(await $.command.run(typed('openspec-board', '../..'))).toMatchObject({ text: expect.stringContaining('is not a change name') })
+    expect(await $.command.run(typed('opsx-board', '../..'))).toMatchObject({ text: expect.stringContaining('is not a change name') })
     await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't-x', usage: { ...USAGE, model: 'm' }, reason: 'answer' })
     await clock.advance(6000)
     expect(state.runs.some(run => run.includes('&') || run.includes('..'))).toBe(false)
-    expect([...state.writes.keys()].every(path => path.startsWith('/home/me/.claude/openspec-board/ledgers/demo-change/'))).toBe(true)
+    expect([...state.writes.keys()].every(path => path.startsWith('/home/me/.claude/opsx-board/ledgers/demo-change/'))).toBe(true)
   })
 
-  test('a subagent gets the progress note only during an apply run', PRIMARY, async ($, on) => {
+  test('a subagent gets the progress note only during an apply run', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     world(on, DEMO_FILES)
     const prompts: string[] = []
@@ -713,13 +711,13 @@ describe('openspec-board', () => {
     expect(prompts.at(-1)).toBe('Find the export settings.')
     await $.command.run(typed('opsx:apply', 'demo-change'))
     await $.agent.spawn(spawn('general-purpose', 'Implement group 2', 'Implement task group 2.'))
-    expect(prompts.at(-1)).toContain('mcp__openspec-board__progress')
+    expect(prompts.at(-1)).toContain('mcp__opsx-board__progress')
     // Review and planning agents never get it.
     await $.agent.spawn(spawn('spec-reviewer', 'Review', 'Review the change.'))
     expect(prompts.at(-1)).toBe('Review the change.')
   })
 
-  test('explore before any change, then the proposal takes over its tokens', PRIMARY, async ($, on) => {
+  test('explore before any change, then the proposal takes over its tokens', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = Object.fromEntries(Object.entries(DEMO_FILES).filter(([path]) => !path.startsWith(CHANGE)))
     const state = world(on, files)
@@ -750,7 +748,7 @@ describe('openspec-board', () => {
     await $.command.run(typed('opsx:propose', 'demo-change'))
     // The ledger writes at most once per 5 s, and the `_pre` write has just happened.
     await clock.advance(12_000)
-    const ledger = JSON.parse(state.writes.get('/home/me/.claude/openspec-board/ledgers/demo-change/sess-1.json') ?? '{}')
+    const ledger = JSON.parse(state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json') ?? '{}')
     expect(ledger.main?.explore).toEqual({ input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 })
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  Plan › ✔  Explore › ')
@@ -758,7 +756,7 @@ describe('openspec-board', () => {
     await board.unmount()
   })
 
-  test('explore binds only an argument that names an existing change', PRIMARY, async ($, on) => {
+  test('explore binds only an argument that names an existing change', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = { ...DEMO_FILES, [`${CWD}/openspec/changes/other-change/proposal.md`]: '## Why\n' }
     world(on, files, 'main')
@@ -781,7 +779,7 @@ describe('openspec-board', () => {
     expect((await ui.find({ type: 'Text', text: /export-ideas/ }))?.text).toContain('export-ideas')
 
     // The explore runs belong to their change: a pinned other change shows none of them.
-    await $.command.run(typed('openspec-board', 'other-change'))
+    await $.command.run(typed('opsx-board', 'other-change'))
     await clock.advance(300)
     expect((await ui.find({ type: 'Text', text: /^other-change$/ }))?.text).toBe('other-change')
     expect((await ui.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('–  Explore')
@@ -789,7 +787,7 @@ describe('openspec-board', () => {
     await ui.unmount()
   })
 
-  test('two active changes: the branch decides, else the pane asks', PRIMARY, async ($, on) => {
+  test('two active changes: the branch decides, else the pane asks', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const files = { ...DEMO_FILES, [`${CWD}/openspec/changes/other-change/proposal.md`]: '## Why\n' }
     const state = world(on, files, 'main')
@@ -806,14 +804,14 @@ describe('openspec-board', () => {
   })
 })
 
-describe('openspec-board with other schemas', () => {
+describe('opsx-board with other schemas', () => {
   const PLAIN = `${CWD}/openspec/changes/plain-change`
   const PLAIN_FILES: Record<string, string> = {
     [`${PLAIN}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-10-30\n',
     [`${PLAIN}/proposal.md`]: PROPOSAL_MD,
   }
 
-  test('a spec-driven change without hints: no Plan or Design, and the artifacts and their order from the CLI', PRIMARY, async ($, on) => {
+  test('a spec-driven change without hints: no Plan or Design, and the artifacts and their order from the CLI', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 30, 20) })
     const state = world(on, PLAIN_FILES, 'feat/plain-change')
     state.status = { 'plain-change': SPEC_DRIVEN_STATUS_JSON }
@@ -842,7 +840,7 @@ describe('openspec-board with other schemas', () => {
       },
     }
     state.files.set(`${PLAIN}/proposal.cmd`, 'del /q *')
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     await ui.press({ key: 'artifact:proposal' })
     expect((await ui.find({ key: 'doc' }))?.text).toContain('del /q *')
@@ -852,7 +850,7 @@ describe('openspec-board with other schemas', () => {
     await ui.unmount()
   })
 
-  test('an archived change of a forked schema: its artifacts come from its schema.yaml, in requires order', PRIMARY, async ($, on) => {
+  test('an archived change of a forked schema: its artifacts come from its schema.yaml, in requires order', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 30, 20) })
     const archived = `${CWD}/openspec/changes/archive/2026-10-01-team-change`
     const state = world(
@@ -868,7 +866,7 @@ describe('openspec-board with other schemas', () => {
     )
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
-    await $.command.run(typed('openspec-board', 'team-change'))
+    await $.command.run(typed('opsx-board', 'team-change'))
     await clock.advance(300)
     expect(state.runs).toContain('openspec schema which team-flow --json')
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -883,11 +881,11 @@ describe('openspec-board with other schemas', () => {
     await ui.unmount()
   })
 
-  test("a board.yaml in the person's folder wins over the one beside the schema", PRIMARY, async ($, on) => {
+  test("a board.yaml in the person's folder wins over the one beside the schema", async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     world(on, {
       ...DEMO_FILES,
-      '/home/me/.claude/openspec-board/schemas/gated-spec-driven/board.yaml': 'version: 1\nverify: { label: Check }\n',
+      '/home/me/.claude/opsx-board/schemas/gated-spec-driven/board.yaml': 'version: 1\nverify: { label: Check }\n',
     })
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
@@ -899,13 +897,13 @@ describe('openspec-board with other schemas', () => {
   })
 })
 
-describe('openspec-board with GitHub issues', () => {
+describe('opsx-board with GitHub issues', () => {
   const GH = `${CWD}/openspec/changes/gh-change`
   const GH_FILES: Record<string, string> = {
     [`${GH}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-10-31\n',
     [`${GH}/proposal.md`]: GITHUB_PROPOSAL_MD,
     [`${GH}/tasks.md`]: '## 1. Build\n\n- [x] 1.1 Build the writer\n',
-    '/home/me/.claude/openspec-board/schemas/spec-driven/board.yaml': GITHUB_BOARD_YAML,
+    '/home/me/.claude/opsx-board/schemas/spec-driven/board.yaml': GITHUB_BOARD_YAML,
   }
   const GH_STATUS = {
     ...SPEC_DRIVEN_STATUS_JSON,
@@ -915,7 +913,7 @@ describe('openspec-board with GitHub issues', () => {
   }
   const issueRuns = (state: World) => state.runs.filter(run => run.startsWith('gh issue view'))
 
-  test('the issues of the proposal, the branch, and the pull request, with their state from gh', PRIMARY, async ($, on) => {
+  test('the issues of the proposal, the branch, and the pull request, with their state from gh', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
     const state = world(on, GH_FILES, '34-csv-export')
     state.status = { 'gh-change': GH_STATUS }
@@ -923,7 +921,7 @@ describe('openspec-board with GitHub issues', () => {
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     // The board command reads the pull request, and with it the issues it closes.
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toBe(
@@ -955,19 +953,19 @@ describe('openspec-board with GitHub issues', () => {
 
     // A refresh within two minutes asks gh nothing new; after that it reads each issue again.
     const before = issueRuns(state).length
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     expect(issueRuns(state).length).toBe(before)
     state.issues = { ...GITHUB_ISSUES, 'o/r#12': { ...(GITHUB_ISSUES['o/r#12'] as object), state: 'CLOSED', stateReason: 'COMPLETED' } }
     await clock.advance(121_000)
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     expect(issueRuns(state).length).toBe(before + 4)
     expect((await ui.find({ key: 'plan:#12' }))?.text).toBe('[x] #12  CSV export of the library')
     await ui.unmount()
   })
 
-  test('an issue opens in the reader as gh reads it, and its page in the browser', PRIMARY, async ($, on) => {
+  test('an issue opens in the reader as gh reads it, and its page in the browser', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
     const state = world(on, GH_FILES, '34-csv-export')
     state.status = { 'gh-change': GH_STATUS }
@@ -996,7 +994,7 @@ describe('openspec-board with GitHub issues', () => {
     await ui.unmount()
   })
 
-  test('without gh: no PR stage, issues without state, and verify before the archive', PRIMARY, async ($, on) => {
+  test('without gh: no PR stage, issues without state, and verify before the archive', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
     const state = world(on, GH_FILES, '34-csv-export')
     state.status = { 'gh-change': GH_STATUS }
@@ -1017,7 +1015,7 @@ describe('openspec-board with GitHub issues', () => {
     await ui.unmount()
   })
 
-  test("the tasks come from the files the schema's apply.tracks names", PRIMARY, async ($, on) => {
+  test("the tasks come from the files the schema's apply.tracks names", async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
     const tracked = TEAM_SCHEMA_YAML.replace('tracks: tasks.md', "tracks: 'work/**/*.md'")
     const state = world(
@@ -1043,19 +1041,18 @@ describe('openspec-board with GitHub issues', () => {
 
     // A schema without apply.tracks tracks no tasks, as the CLI does.
     state.files.set('/pkg/schemas/team-flow/schema.yaml', TEAM_SCHEMA_YAML.replace("  tracks: tasks.md\n", ''))
-    await $.command.run(typed('openspec-board', ''))
+    await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     expect(await ui.find({ key: 'group:1' })).toBeUndefined()
     await ui.unmount()
   })
 })
 
-describe('openspec-board in shadow mode, beside the opsx-board mod', () => {
-  test('it adds no tool, no prompt note, no toast, and no status line, and opens only on its own command', async ($, on) => {
+describe('opsx-board options', () => {
+  test('reportTool false: no progress tool and no progress note, and the rest of the board', { options: { reportTool: false } }, async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
     on('command.run', () => ({ text: '' }))
-    on('turn.complete', () => ({ text: '' }))
     let spawnedPrompt = ''
     on('agent.spawn', (_, e) => {
       spawnedPrompt = e.prompt
@@ -1068,45 +1065,9 @@ describe('openspec-board in shadow mode, beside the opsx-board mod', () => {
     expect(applied.context ?? []).toEqual([])
     await $.agent.spawn(spawn('general-purpose', 'Implement group 2', 'Implement task group 2 of demo-change.'))
     expect(spawnedPrompt).toBe('Implement task group 2 of demo-change.')
-    await $.turn.complete({ answer: '', durationMs: 1000, isAborted: false, turnId: 't-2', agentId: 'agent-2', reason: 'answer' })
-    await clock.advance(6000)
-    expect(state.tools).toEqual([])
-    expect(state.opened).toEqual([])
-    expect(state.toasts).toEqual([])
-    expect(state.statuses).toEqual([])
-
-    await $.command.run(typed('openspec-board', ''))
-    expect(state.opened).toEqual(['openspec-board'])
-  })
-
-  test('it reads the progress reports that agents send to the opsx-board tool', async ($, on) => {
-    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
-    world(on, DEMO_FILES)
-    on('command.run', () => ({ text: '' }))
-    on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'agent-2' }))
-    on('turn.step', async function* (_, e) {
-      return {
-        turnId: e.turnId,
-        index: e.index,
-        answer: '',
-        toolUses: [{ name: 'mcp__opsx-board__progress', input: { change: 'demo-change', group: '2', task: '2.2', state: 'start' } }],
-        stopReason: 'tool_use' as const,
-        usage: { ...USAGE, model: 'claude-opus-5-5' },
-      }
-    })
-    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
-    await $.command.run(typed('opsx:apply', 'demo-change'))
-    // The prompt names no group, so only the report can place the agent.
-    await $.agent.spawn(spawn('general-purpose', 'Implement the next part', 'Implement the next part.'))
-    for await (const chunk of $.turn.step({ turnId: 't-2', index: 0, model: 'claude-opus-5-5', messageCount: 3, agentId: 'agent-2' })) {
-      void chunk
-    }
-    await clock.advance(1000)
-
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await ui.find({ key: 'task:2.2' }))?.text).toContain('← general-purpose')
-    expect((await ui.find({ key: 'group-agent:2' }))?.text).toContain('general-purpose')
-    await ui.unmount()
+    expect(state.tools).toEqual([])
+    // The pane still opens on the workflow command.
+    expect(state.opened).toContain('opsx-board')
   })
 })

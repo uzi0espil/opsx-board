@@ -1,4 +1,4 @@
-# openspec-board
+# opsx-board
 
 A Claude Code plugin that shows, in a pane beside the chat, where the OpenSpec change of the
 session stands: Explore, Propose, Apply, Verify, PR, and Archive. The Propose section lists the
@@ -13,16 +13,7 @@ items and a Design stage. See [Schemas and board.yaml](#schemas-and-boardyaml).
 > repository or from GitHub issues. A Jira provider comes next. The plugin is not affiliated with
 > the OpenSpec project.
 
-## Modes
-
-The setting `mode` in `/config` has two values:
-
-| Mode | Use |
-|------|-----|
-| `shadow` (default) | Runs beside `opsx-board`, an earlier version of this board, for a comparison of the two. It registers no tool and adds no prompt note. It reads the calls of `mcp__opsx-board__progress` from the model steps of the session. The pane opens only on `/openspec-board`. The plugin shows no toast about the workflow and no status line. |
-| `primary` | Runs alone. It registers `mcp__openspec-board__progress`, adds the progress notes, opens the pane on the workflow commands, and shows the toasts and the status line. |
-
-The rest of this README describes the `primary` mode.
+## The board
 
 The examples in the rest of this README use the `board.yaml` of
 [Schemas and board.yaml](#schemas-and-boardyaml): a Plan stage of backlog items (`WI-12`), a
@@ -33,7 +24,7 @@ explored topics with the tokens spent on them, and the design views. When `/opsx
 runs later in the same session, the pane binds the change and moves the explored topics and the
 tokens into it. The session explores while `/opsx:explore` is its last workflow command. An
 explore argument binds the pane only when it names an active change. An archived change binds
-only through `/openspec-board <change>`.
+only through `/opsx-board <change>`.
 
 A session explores in the context of the change that it is bound to. In a folder with exactly
 one active change, the session binds that change by itself, so its explore tokens count for that
@@ -74,7 +65,7 @@ The reader is a view of the board pane. A document replaces the board in the sam
 `← Board` brings the board back, at the row that opened the document. The hotkey `b` presses
 `← Board` while the pane holds the keyboard. Esc does not close the reader, because the engine
 never passes Esc to a mod. Esc gives the keyboard back to the prompt. When the pane closes, or
-when `/openspec-board` runs, the pane shows the board again.
+when `/opsx-board` runs, the pane shows the board again.
 
 The reader is not a second pane, for two reasons:
 
@@ -98,10 +89,10 @@ events. It changes no workflow file.
 
 ## Use
 
-- `/openspec-board`: open the pane.
-- `/openspec-board <change>`: pin the pane to a change, also an archived one.
-- `/openspec-board auto`: let the session choose the change again.
-- `/openspec-board close`: close the pane.
+- `/opsx-board`: open the pane.
+- `/opsx-board <change>`: pin the pane to a change, also an archived one.
+- `/opsx-board auto`: let the session choose the change again.
+- `/opsx-board close`: close the pane.
 
 The pane opens by itself on any `/opsx:*` command and on the design command of the hints, when
 the terminal is wide enough. A status line under the prompt shows the stage when the pane is closed.
@@ -126,8 +117,8 @@ Without `gh`, the board cannot see a pull request. It shows no PR stage, and whe
 
 ## Progress report tool
 
-During an apply run of a change with open tasks, the mod asks the main agent and each new
-subagent to call `mcp__openspec-board__progress` before and after each task. The pane then marks
+During an apply run of a change with open tasks, the board asks the main agent and each new
+subagent to call `mcp__opsx-board__progress` before and after each task. The pane then marks
 the exact task in progress. The agents `Explore`, `Plan`, `claude-code-guide`, and
 `statusline-setup` do not get the request, and neither do the review agent, the plan agent, and
 the agents in `apply.skipReportAgents` of the hints. The setting `reportTool` in `/config` stops these requests. The pane then
@@ -142,7 +133,7 @@ On Windows the `openspec` CLI runs through `cmd /c`, which reads `&` and `|` as 
 ## Tokens
 
 Tokens count per model request, so a running agent's total grows while it works. Totals for a
-change persist across sessions in `~/.claude/openspec-board/ledgers/<change>/<session>.json`, one
+change persist across sessions in `~/.claude/opsx-board/ledgers/<change>/<session>.json`, one
 file per session.
 
 ## Schemas and board.yaml
@@ -163,7 +154,7 @@ The stages come from OpenSpec:
 
 A `board.yaml` adds what OpenSpec does not know. The board reads the first one it finds:
 
-1. `~/.claude/openspec-board/schemas/<schema>/board.yaml`, the person's own copy.
+1. `~/.claude/opsx-board/schemas/<schema>/board.yaml`, the person's own copy.
 2. `board.yaml` in the folder of the schema, for example
    `openspec/schemas/<schema>/board.yaml`. It passes `openspec schema validate`.
 
@@ -288,7 +279,6 @@ To load the board in every session, add this folder to
 list of folders, separated by `;` on Windows and `:` elsewhere. A change of the variable takes
 effect in the next session.
 
-The tests run in both modes. The `primary` tests use the `board.yaml` of a demo project. The
-`shadow` tests prove that the plugin adds nothing that `opsx-board` already shows. Other tests
-cover a plain `spec-driven` change, an archived change of a forked schema, GitHub issues with
-and without `gh`, and tasks from `apply.tracks`.
+The tests use the `board.yaml` of a demo project. Other tests cover a plain `spec-driven`
+change, an archived change of a forked schema, GitHub issues with and without `gh`, tasks from
+`apply.tracks`, and the `reportTool` setting.

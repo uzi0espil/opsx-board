@@ -1,5 +1,5 @@
 // Token arithmetic and the per-session ledger files that carry a change's totals
-// across sessions: <home>/.claude/openspec-board/ledgers/<change>/<sessionId>.json.
+// across sessions: <home>/.claude/opsx-board/ledgers/<change>/<sessionId>.json.
 // One file per session, so parallel sessions never write the same file.
 import type { EngineInterface, ModelUsage } from 'claude-code'
 
@@ -66,7 +66,7 @@ export type LedgerFile = {
 export async function ledgerRoot($: Engine): Promise<string | undefined> {
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
 
-  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/openspec-board/ledgers`
+  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/opsx-board/ledgers`
 }
 
 export async function writeLedger($: Engine, root: string, file: LedgerFile): Promise<void> {

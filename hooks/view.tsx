@@ -30,7 +30,7 @@ import { formatDuration, formatTokens, reflowTables } from './parse'
 
 type Engine = EngineInterface
 
-export const PANE = 'openspec-board'
+export const PANE = 'opsx-board'
 
 export type PaneData = {
   binding: Binding

@@ -269,7 +269,7 @@ export type Flags = { [key: string]: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
-    'openspec-board': {
+    'opsx-board': {
       binding: Binding
       snapshot: Snapshot | null
       live: Live

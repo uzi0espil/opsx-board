@@ -394,7 +394,7 @@ export const inferGroup = (text: string, groups: readonly TaskGroup[]): string |
 }
 
 /**
- * A change name the mod accepts: kebab-case, as OpenSpec writes it. Each name that reaches
+ * A change name the board accepts: kebab-case, as OpenSpec writes it. Each name that reaches
  * a command line (`cmd /c openspec` on Windows) or a ledger path passes this check first.
  */
 export const isChangeName = (name: string): boolean => NAME.test(name)
