@@ -317,3 +317,64 @@ verify:
 apply:
   skipReportAgents: [architect]
 `
+
+// ── GitHub issues ───────────────────────────────────────────────────────────
+
+// A board.yaml that reads the work items of a change from GitHub: the proposal's Issues
+// section, the issue number at the start of the branch name, and what the pull request closes.
+export const GITHUB_BOARD_YAML = String.raw`version: 1
+stages:
+  - { id: plan, label: Issues, collects: work-item, section: Issues }
+refs:
+  - { kind: work-item, provider: github, branch: '^(\d+)-' }
+`
+
+export const GITHUB_PROPOSAL_MD = `## Why
+
+People want their library in a spreadsheet.
+
+## Issues
+
+- #12 CSV export
+- Needs the upstream fix https://github.com/other/lib/issues/7
+- See #12 again, and the heading anchor [notes](#13-notes)
+
+## Impact
+
+Backend.
+`
+
+const closing = (number: number) => ({
+  id: `I_${number}`,
+  number,
+  repository: { id: 'R_1', name: 'r', owner: { id: 'O_1', login: 'o' } },
+  url: `https://github.com/o/r/issues/${number}`,
+})
+
+/** `gh pr list --json number,state,url,closingIssuesReferences`, as gh 2.101 writes it. */
+export const GITHUB_PRS = JSON.stringify([
+  { closingIssuesReferences: [closing(12), closing(40)], number: 51, state: 'OPEN', url: 'https://github.com/o/r/pull/51' },
+])
+
+const issue = (number: number, title: string, state: string, stateReason: string | null) => ({
+  number,
+  state,
+  stateReason,
+  title,
+  url: `https://github.com/o/r/issues/${number}`,
+})
+
+/** `gh issue view N --json ...` by `<repo>#<N>`; a string is what gh writes to stderr as it fails. */
+export const GITHUB_ISSUES: Record<string, object | string> = {
+  'o/r#12': {
+    ...issue(12, 'CSV export of the library', 'OPEN', null),
+    body: '## Steps\n\nExport a CSV.',
+    author: { login: 'sam' },
+    createdAt: '2026-10-01T09:00:00Z',
+    labels: [{ id: 'L_1', name: 'feature', description: '', color: 'aaaaaa' }],
+    assignees: [{ id: 'U_1', login: 'dana', name: 'Dana' }],
+  },
+  'o/r#34': issue(34, 'Streaming writer', 'CLOSED', 'COMPLETED'),
+  'o/r#40': issue(40, 'Excel export', 'CLOSED', 'NOT_PLANNED'),
+  'other/lib#7': 'GraphQL: Could not resolve to an issue or pull request with the number of 7. (repository.issue)',
+}

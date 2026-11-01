@@ -9,8 +9,9 @@ The board reads the schema of each change from the `openspec` CLI, so it works w
 A `board.yaml` beside the schema adds what OpenSpec does not know, such as a Plan stage of work
 items and a Design stage. See [Schemas and board.yaml](#schemas-and-boardyaml).
 
-> **Work in progress.** The plugin is not in a marketplace yet. Providers for work items outside
-> the repository (GitHub, Jira) come next. The plugin is not affiliated with the OpenSpec project.
+> **Work in progress.** The plugin is not in a marketplace yet. Work items come from files of the
+> repository or from GitHub issues. A Jira provider comes next. The plugin is not affiliated with
+> the OpenSpec project.
 
 ## Modes
 
@@ -120,6 +121,9 @@ During an apply run, the pane hides Next until no task is `[ ]` and the pull req
 Then Next offers `/opsx:archive`. A task left `[~]` for the owner does not hold the archive back.
 After an apply run ends early, Next offers `/opsx:apply` again.
 
+Without `gh`, the board cannot see a pull request. It shows no PR stage, and when no task is
+`[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
+
 ## Progress report tool
 
 During an apply run of a change with open tasks, the mod asks the main agent and each new
@@ -150,8 +154,10 @@ The stages come from OpenSpec:
   from `openspec status --json`. An archived change gets them from the `schema.yaml` that its
   `.openspec.yaml` names, which `openspec schema which <name>` finds.
 - **Explore**, **Apply**, **Verify**, and **Archive** follow the `/opsx:*` commands, the task
-  checks, and the archive folder.
-- **PR** comes from `gh`.
+  checks, and the archive folder. The tasks come from the files that `apply.tracks` of the
+  schema names, a path or a glob in the change folder. A schema without `apply.tracks` tracks no
+  tasks, as the CLI does.
+- **PR** comes from `gh`. Without `gh`, the board shows no PR stage.
 
 A `board.yaml` adds what OpenSpec does not know. The board reads the first one it finds:
 
@@ -220,10 +226,45 @@ Its parts:
 | `verify` | The label of the Verify stage, the review agent, and the pattern of its finding lines. |
 | `apply.skipReportAgents` | More agents that never get the progress request. |
 
+### GitHub issues
+
+A `work-item` ref with `provider: github` takes the work items of a change from GitHub issues.
+This `board.yaml` works for any schema:
+
+```yaml
+version: 1
+
+stages:
+  - { id: plan, label: Issues, collects: work-item, section: Issues }
+
+refs:
+  - { kind: work-item, provider: github, branch: '^(\d+)-' }
+```
+
+The board finds the issues of a change in three places, and shows each issue once:
+
+1. The proposal section of the stage: each `#12`, `owner/name#12`, and issue URL in it.
+2. The branch name: the first group of the `branch` pattern, such as `12` in `12-csv-export`.
+3. The pull request of the branch: the issues it closes. Set `pr: false` to leave them out.
+
+`gh issue view` gives the title and the state of each issue: `[ ]` open, `[x]` closed as done,
+`[-]` closed as not planned. The board reads an issue again after two minutes, and it shows the
+first 12 issues of a change. A click on an issue shows its body in the reader, with a button
+that opens its page.
+
+A bare `#12` names an issue of the home repository: `repo` of the ref (`owner/name`), else the
+repository of the pull request, else the one `gh` finds from the working directory. Without
+`gh`, the issues show `[?]` and a warning.
+
+### The check
+
 A `board.yaml` comes with any repository, so the board checks it strictly:
 
-- It names built-in providers only. Version 1 has the `file` provider. A provider that calls a
-  tool or a command is not built in, and the board ignores a ref that names one.
+- It names built-in providers only. Version 1 has the `file` and `github` providers. The
+  `github` provider runs `gh issue view` and reads the pull request that the PR stage reads.
+  The file chooses which issues count, never a command. A provider that calls a tool or a
+  command of the file's choice is not built in, and the board ignores a ref that names one.
+- A `repo` must be `owner/name`.
 - Every path stays inside the repository: no absolute path, no drive, and no `..`.
 - A design opens a document file only.
 - Next fills the prompt with one slash command and a short argument. It never runs it.
@@ -245,4 +286,5 @@ effect in the next session.
 
 The tests run in both modes. The `primary` tests use the `board.yaml` of a demo project. The
 `shadow` tests prove that the plugin adds nothing that `opsx-board` already shows. Other tests
-cover a plain `spec-driven` change and an archived change of a forked schema.
+cover a plain `spec-driven` change, an archived change of a forked schema, GitHub issues with
+and without `gh`, and tasks from `apply.tracks`.

@@ -476,12 +476,14 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       : section('plan', plan?.label ?? 'Plan', plan?.state, plan?.state === 'active', null, () => [
           ...snap.planning.map(item => {
             const mark = item.mark ?? '?'
+            // A GitHub issue that the proposal does not name says where the board found it.
+            const via = item.issue?.via === 'branch' ? ' · branch' : item.issue?.via === 'pr' ? ' · closed by the PR' : ''
 
             return (
               <Button key={`plan:${item.id}`} plain onPress={() => void actions.readPlanning(item)}>
                 <Text color={mark === '?' ? 'error' : MARK_COLOR[mark]}>{`[${mark}]`}</Text>
                 <Text bold>{` ${item.id}`}</Text>
-                <Text dimColor>{`  ${clip(item.title, Math.max(10, body - item.id.length - 8))}`}</Text>
+                <Text dimColor>{`  ${clip(item.title, Math.max(10, body - item.id.length - via.length - 8))}${via}`}</Text>
               </Button>
             )
           }),
@@ -797,7 +799,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       {nextCard}
       <Box paddingX={1} marginTop={1}>
         <Text dimColor italic wrap="truncate-end">
-          click a row · artifact → reader · design, PR → browser · group → its tasks · agent → its session · task → full text
+          click a row · artifact, work item → reader · design, PR → browser · group → its tasks · agent → its session · task → full text
         </Text>
       </Box>
     </Box>
@@ -812,6 +814,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
 export function renderReader($: Engine, e: RenderInput<'Pane'>, doc: ReaderDoc, text: string | undefined, actions: ReaderActions) {
   const { Box, Text, Button, Markdown } = $.ui.resolve(e)
   const path = doc.path
+  const url = doc.url
   // The text area is the body less its padding; a wider table becomes a list.
   const shown = text === undefined ? undefined : reflowTables(text, Math.max(20, e.props.bodyColumns - 2))
 
@@ -828,14 +831,19 @@ export function renderReader($: Engine, e: RenderInput<'Pane'>, doc: ReaderDoc, 
                 Open in its app ↗
               </Button>
             )}
+            {url === undefined ? null : (
+              <Button key="browser" dimColor onPress={() => void actions.openExternal(url, doc.title)}>
+                Open in the browser ↗
+              </Button>
+            )}
             <Button key="back" hotkey="b" onPress={() => actions.back()}>
               ← Board
             </Button>
           </Box>
         </Box>
-        {path === undefined ? null : (
+        {path === undefined && url === undefined ? null : (
           <Text dimColor wrap="truncate-start">
-            {path}
+            {path ?? url}
           </Text>
         )}
         {shown === undefined || shown.reflowed === 0 ? null : (

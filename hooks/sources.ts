@@ -2,9 +2,10 @@
 // board.yaml hints, the files the hints name, git, and gh. Every read goes through `$`.
 import type { EngineInterface } from 'claude-code'
 
-import type { ArtifactRow, BoardHints, CommitHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PullRequest, Snapshot, Verdict } from '../types'
+import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
+import { GITHUB_WARNING, closingRefs, collectIssues, hasGh } from './github'
 import { classifyCommits, findMarker, parseCreated, parseDecisions, parseJson, parsePlanning, parseTasks, parseVisualDesign, readVerdict } from './parse'
-import { defaultHints, inRequiresOrder, isSafeId, isSchemaName, readHints, readSchema, schemaNameOf } from './schema'
+import { defaultHints, inRequiresOrder, isSafeId, isSafePath, isSchemaName, readHints, readSchema, schemaNameOf } from './schema'
 import type { SchemaInfo } from './schema'
 import { YamlError } from './yaml'
 
@@ -383,17 +384,25 @@ async function collectVerdicts($: Engine, dir: string, artifacts: readonly Artif
   return verdicts
 }
 
-export async function fetchPullRequest($: Engine, cwd: string, branch: string): Promise<PullRequest | undefined> {
+/** The pull request of a branch; with `withCloses`, also the issues it closes. */
+export async function fetchPullRequest($: Engine, cwd: string, branch: string, withCloses = false): Promise<PullRequest | undefined> {
   if (branch === 'main' || branch === 'HEAD') {
     return undefined
   }
-  const argv = ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,url', '--limit', '1']
+  const fields = withCloses ? 'number,state,url,closingIssuesReferences' : 'number,state,url'
+  const argv = ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', fields, '--limit', '1']
   const ran = await run($, argv, cwd)
   if (ran?.exitCode !== 0) {
     return undefined
   }
   try {
-    return (JSON.parse(ran.stdout) as PullRequest[])[0]
+    const found = (JSON.parse(ran.stdout) as (PullRequest & { closingIssuesReferences?: unknown })[])[0]
+    if (found === undefined) {
+      return undefined
+    }
+    const pr: PullRequest = { number: found.number, state: found.state, url: found.url }
+
+    return withCloses ? { ...pr, closes: closingRefs(found.closingIssuesReferences) } : pr
   } catch {
     return undefined
   }
@@ -419,33 +428,136 @@ async function mergedPullRequest($: Engine, cwd: string, archivedAs: string): Pr
   }
 }
 
-/** The branch, the change's commits, and its pull request; what is not due comes from `previous`. */
+export type GitOptions = { isGitDue: boolean; isPrDue: boolean; hints: BoardHints; archivedAs?: string; now: number }
+
+/**
+ * The branch, the change's commits, and its pull request; what is not due comes from
+ * `previous`. Without `gh` there is no pull request to read.
+ */
 export async function collectGit(
   $: Engine,
   cwd: string,
   change: string,
   previous: Snapshot | null,
-  isGitDue: boolean,
-  isPrDue: boolean,
-  commitHints: CommitHints,
-  archivedAs?: string,
-): Promise<Pick<Snapshot, 'branch' | 'commits' | 'pr'>> {
+  options: GitOptions,
+): Promise<Pick<Snapshot, 'branch' | 'commits' | 'pr' | 'isGhMissing'>> {
+  const { isGitDue, isPrDue, hints, archivedAs, now } = options
   let branch = previous?.branch
   let commits = previous?.commits ?? []
   if (isGitDue) {
     branch = await currentBranch($, cwd)
     const log = await run($, ['git', 'log', '-n', '400', '--format=%h%x09%s'], cwd)
-    commits = log?.exitCode === 0 ? classifyCommits(log.stdout, change, commitHints) : commits
+    commits = log?.exitCode === 0 ? classifyCommits(log.stdout, change, hints.commits) : commits
   }
   let pr = previous?.pr
-  if (archivedAs === undefined && isPrDue && branch !== undefined) {
-    pr = (await fetchPullRequest($, cwd, branch)) ?? pr
+  // Asked once per session (see hasGh), so the PR stage hides from the first snapshot on.
+  const isGhMissing = !(await hasGh($, cwd, now))
+  if (isGhMissing !== true && archivedAs === undefined && isPrDue && branch !== undefined) {
+    pr = (await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)) ?? pr
   }
-  if (archivedAs !== undefined && pr === undefined && isGitDue) {
+  if (isGhMissing !== true && archivedAs !== undefined && pr === undefined && isGitDue) {
     pr = await mergedPullRequest($, cwd, archivedAs)
   }
 
-  return { branch, commits, pr }
+  return { branch, commits, pr, isGhMissing }
+}
+
+/**
+ * The work items of a change: those of the files first, then its GitHub issues. `proposal`
+ * holds the issues the proposal names.
+ */
+export async function collectWorkItems(
+  $: Engine,
+  cwd: string,
+  fileItems: readonly PlanningItem[],
+  proposal: readonly PlanningItem[],
+  git: Pick<Snapshot, 'branch' | 'pr'>,
+  hints: PlanHints,
+  now: number,
+): Promise<{ items: PlanningItem[]; warnings: string[] }> {
+  const files = await collectPlanning($, cwd, fileItems, hints)
+  if (hints.github === undefined) {
+    return { items: files, warnings: [] }
+  }
+  const issues = await collectIssues($, cwd, hints.github, proposal, git.branch, git.pr, now)
+
+  return { items: [...files, ...issues.items], warnings: issues.warnings }
+}
+
+/** The warnings of a snapshot without those of the GitHub provider, which a refresh replaces. */
+export const withoutGithubWarnings = (warnings: readonly string[]): string[] => warnings.filter(warning => !warning.startsWith(GITHUB_WARNING))
+
+// ── the tracked tasks ───────────────────────────────────────────────────────
+
+const MAX_TRACKED = 50
+
+/** The files under `dir` that a glob of `*`, `**`, and `?` matches, sorted, at most MAX_TRACKED. */
+async function globFiles($: Engine, dir: string, glob: string): Promise<string[]> {
+  const parts = glob.split('/')
+  const segment = (part: string) => {
+    const pattern = part
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+
+    return new RegExp(`^${pattern}$`)
+  }
+  const out: string[] = []
+  const walk = async (path: string, index: number, depth: number): Promise<void> => {
+    const part = parts[index]
+    if (part === undefined || out.length >= MAX_TRACKED || depth > 8) {
+      return
+    }
+    const entries = await $.fs.list(`${dir}/${path}`.replace(/\/$/, '')).catch(() => [])
+    const isLast = index === parts.length - 1
+    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+      const child = path === '' ? entry.name : `${path}/${entry.name}`
+      if (part === '**') {
+        if (entry.kind === 'dir') {
+          await walk(child, index, depth + 1)
+        } else if (isLast) {
+          out.push(child)
+        }
+        continue
+      }
+      if (!segment(part).test(entry.name)) {
+        continue
+      }
+      if (isLast && entry.kind === 'file') {
+        out.push(child)
+      } else if (!isLast && entry.kind === 'dir') {
+        await walk(child, index + 1, depth + 1)
+      }
+    }
+    // `**` also matches no folder at all.
+    if (part === '**') {
+      await walk(path, index + 1, depth)
+    }
+  }
+  await walk('', 0, 0)
+
+  return [...new Set(out)].sort().slice(0, MAX_TRACKED)
+}
+
+/**
+ * The task groups of the files the schema's `apply.tracks` names, a path or a glob inside the
+ * change folder. A schema the board cannot read tracks `tasks.md`; one without `apply.tracks`
+ * tracks no tasks, as the CLI does.
+ */
+async function collectTasks($: Engine, cwd: string, dir: string, schema: string): Promise<{ groups: TaskGroup[]; warning?: string }> {
+  const info = await schemaInfo($, cwd, schema)
+  const tracks = typeof info === 'string' ? 'tasks.md' : info.tracks
+  if (tracks === undefined) {
+    return { groups: [] }
+  }
+  // A glob stays inside the change folder as a path does: no drive, no `..`.
+  if (!isSafePath(tracks.replace(/[*?]/g, 'x'))) {
+    return { groups: [], warning: `apply.tracks "${tracks}" is not a path inside the change` }
+  }
+  const files = tracks.includes('*') || tracks.includes('?') ? await globFiles($, dir, tracks) : [tracks]
+  const texts = await Promise.all(files.map(file => readText($, `${dir}/${file}`)))
+
+  return { groups: texts.flatMap(text => (text === undefined ? [] : parseTasks(text))) }
 }
 
 export type CollectOptions = {
@@ -502,23 +614,36 @@ export async function collectSnapshot(
   )
   const specsCount = status?.artifactPaths?.['specs']?.existingOutputPaths?.length ?? specs.length
 
-  const [tasks, proposal] = await Promise.all([readText($, `${dir}/tasks.md`), readText($, `${dir}/proposal.md`)])
+  const [tasks, proposal] = await Promise.all([collectTasks($, cwd, dir, schema), readText($, `${dir}/proposal.md`)])
+  if (tasks.warning !== undefined) {
+    warnings.push(tasks.warning)
+  }
+  const previous = options.previous?.change === change ? options.previous : null
+  const git = await collectGit($, cwd, change, previous, {
+    isGitDue: options.isGitDue || previous === null,
+    isPrDue: options.isPrDue,
+    hints,
+    archivedAs,
+    now: options.now,
+  })
+  const { branch, commits, pr } = git
+
   const parsedPlanning = proposal === undefined || hints.plan === undefined ? { items: [] } : parsePlanning(proposal, hints.plan)
-  const planning = hints.plan === undefined ? [] : await collectPlanning($, cwd, parsedPlanning.items, hints.plan)
+  const work =
+    hints.plan === undefined
+      ? { items: [], warnings: [] }
+      : await collectWorkItems(
+          $,
+          cwd,
+          parsedPlanning.items.filter(item => item.issue === undefined),
+          parsedPlanning.items.filter(item => item.issue !== undefined),
+          git,
+          hints.plan,
+          options.now,
+        )
+  const planning = work.items
   const designs = await collectDesigns($, cwd, proposal, options.runs, hints.design)
   const verdicts = await collectVerdicts($, dir, artifacts, hints)
-
-  const previous = options.previous?.change === change ? options.previous : null
-  const { branch, commits, pr } = await collectGit(
-    $,
-    cwd,
-    change,
-    previous,
-    options.isGitDue || previous === null,
-    options.isPrDue,
-    hints.commits,
-    archivedAs,
-  )
 
   const snap: Snapshot = {
     change,
@@ -533,15 +658,16 @@ export async function collectSnapshot(
     artifacts,
     isPlanningComplete,
     specsCount,
-    groups: tasks === undefined ? [] : parseTasks(tasks),
+    groups: tasks.groups,
     verdicts,
     planning,
     planningNone: parsedPlanning.none,
     designs,
     commits,
     pr,
+    isGhMissing: git.isGhMissing,
     refreshedAt: options.now,
-    warnings: [...warnings, ...hints.warnings],
+    warnings: [...warnings, ...hints.warnings, ...work.warnings],
   }
 
   return { snap, hints }

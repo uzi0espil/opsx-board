@@ -5,6 +5,10 @@ import {
   ARCH_REVIEW_MD,
   DECISIONS_MD,
   GIT_LOG,
+  GITHUB_BOARD_YAML,
+  GITHUB_ISSUES,
+  GITHUB_PROPOSAL_MD,
+  GITHUB_PRS,
   OPENSPEC_YAML,
   PROPOSAL_MD,
   DEMO_BOARD_YAML,
@@ -55,6 +59,10 @@ type World = {
   prs: string
   /** The `openspec status --json` output of each active change the CLI knows. */
   status: Record<string, unknown>
+  /** Set, `gh` is not installed: the process cannot start. */
+  isGhMissing: boolean
+  /** What `gh issue view` gives, by `<repo>#<N>`; a string fails with that stderr. */
+  issues: Record<string, object | string>
 }
 
 // The engine hands a hook the path as the host resolves it (`C:\repo\...` on Windows).
@@ -83,6 +91,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     log: GIT_LOG,
     prs: '[{"number":227,"state":"OPEN","url":"https://github.com/o/r/pull/227"}]',
     status: { 'demo-change': STATUS_JSON },
+    isGhMissing: false,
+    issues: GITHUB_ISSUES,
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -159,9 +169,26 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
   on('process.run', (_, e) => {
     const command = e.argv.join(' ')
     state.runs.push(command)
-    const ran = (stdout: string, exitCode = 0) => ({
-      value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    const ran = (stdout: string, exitCode = 0, stderr = '') => ({
+      value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
     })
+    if (e.argv[0] === 'gh' && state.isGhMissing) {
+      return { deny: 'spawn gh ENOENT' }
+    }
+    if (command === 'gh --version') {
+      return ran('gh version 2.101.0 (2026-09-15)\n')
+    }
+    // gh resolves a bare number to the repository of the working directory, here o/r.
+    const issue = /^gh issue view (\d+) --json ([\w,]+)(?: -R ([\w./-]+))?$/.exec(command)
+    if (issue) {
+      const found = state.issues[`${issue[3] ?? 'o/r'}#${issue[1]}`]
+      if (found === undefined || typeof found === 'string') {
+        return ran('', 1, found ?? `GraphQL: Could not resolve to an issue or pull request with the number of ${issue[1]}.`)
+      }
+      const fields = (issue[2] ?? '').split(',')
+
+      return ran(JSON.stringify(Object.fromEntries(Object.entries(found).filter(([key]) => fields.includes(key)))))
+    }
     const status = /^openspec status --change ([\w-]+) --json$/.exec(command)
     if (status) {
       const json = state.status[status[1] ?? '']
@@ -832,6 +859,155 @@ describe('openspec-board with other schemas', () => {
     expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toBe(
       '–  Explore › ✔  Propose ›  ▶  Apply  › ○  Check › ○  PR › ○  Archive',
     )
+    await ui.unmount()
+  })
+})
+
+describe('openspec-board with GitHub issues', () => {
+  const GH = `${CWD}/openspec/changes/gh-change`
+  const GH_FILES: Record<string, string> = {
+    [`${GH}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-10-31\n',
+    [`${GH}/proposal.md`]: GITHUB_PROPOSAL_MD,
+    [`${GH}/tasks.md`]: '## 1. Build\n\n- [x] 1.1 Build the writer\n',
+    '/home/me/.claude/openspec-board/schemas/spec-driven/board.yaml': GITHUB_BOARD_YAML,
+  }
+  const GH_STATUS = {
+    ...SPEC_DRIVEN_STATUS_JSON,
+    changeName: 'gh-change',
+    isComplete: true,
+    artifacts: SPEC_DRIVEN_STATUS_JSON.artifacts.map(artifact => ({ id: artifact.id, outputPath: artifact.outputPath, requires: artifact.requires, status: 'done' })),
+  }
+  const issueRuns = (state: World) => state.runs.filter(run => run.startsWith('gh issue view'))
+
+  test('the issues of the proposal, the branch, and the pull request, with their state from gh', PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
+    const state = world(on, GH_FILES, '34-csv-export')
+    state.status = { 'gh-change': GH_STATUS }
+    state.prs = GITHUB_PRS
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    // The board command reads the pull request, and with it the issues it closes.
+    await $.command.run(typed('openspec-board', ''))
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toBe(
+      '–  Explore › ✔  Issues › ✔  Propose › ✔  Apply › ✔  Verify › ✔  PR ›  ○  Archive ',
+    )
+    await ui.press({ key: 'fold:plan' })
+    const rows = []
+    for (const id of ['#12', 'other/lib#7', '#34', '#40']) {
+      rows.push((await ui.find({ key: `plan:${id}` }))?.text)
+    }
+    expect(rows).toEqual([
+      '[ ] #12  CSV export of the library',
+      '[?] other/lib#7  not found on GitHub',
+      '[x] #34  Streaming writer · branch',
+      '[-] #40  Excel export · closed by the PR',
+    ])
+    // A heading anchor such as #13-notes names no issue.
+    expect(await ui.find({ key: 'plan:#13' })).toBeUndefined()
+    // The pull request gives the home repository, so a bare #N names it; another one keeps its
+    // name. Before the pull request is known, gh resolves a bare #N from the working directory.
+    expect(issueRuns(state)).toContain('gh issue view 12 --json number,title,state,stateReason,url')
+    for (const run of ['12 --json number,title,state,stateReason,url -R o/r', '34 --json number,title,state,stateReason,url -R o/r', '40 --json number,title,state,stateReason,url -R o/r', '7 --json number,title,state,stateReason,url -R other/lib']) {
+      expect(issueRuns(state)).toContain(`gh issue view ${run}`)
+    }
+    expect(state.runs).toContain('gh pr list --head 34-csv-export --state all --json number,state,url,closingIssuesReferences --limit 1')
+    expect(await ui.find({ type: 'Text', text: /^⚠/ })).toBeUndefined()
+
+    // A refresh within two minutes asks gh nothing new; after that it reads each issue again.
+    const before = issueRuns(state).length
+    await $.command.run(typed('openspec-board', ''))
+    await clock.advance(300)
+    expect(issueRuns(state).length).toBe(before)
+    state.issues = { ...GITHUB_ISSUES, 'o/r#12': { ...(GITHUB_ISSUES['o/r#12'] as object), state: 'CLOSED', stateReason: 'COMPLETED' } }
+    await clock.advance(121_000)
+    await $.command.run(typed('openspec-board', ''))
+    await clock.advance(300)
+    expect(issueRuns(state).length).toBe(before + 4)
+    expect((await ui.find({ key: 'plan:#12' }))?.text).toBe('[x] #12  CSV export of the library')
+    await ui.unmount()
+  })
+
+  test('an issue opens in the reader as gh reads it, and its page in the browser', PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
+    const state = world(on, GH_FILES, '34-csv-export')
+    state.status = { 'gh-change': GH_STATUS }
+    state.prs = GITHUB_PRS
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'fold:plan' })
+    await ui.press({ key: 'plan:#12' })
+    expect(state.runs.at(-1)).toBe('gh issue view 12 --json number,title,state,stateReason,url,body,author,createdAt,labels,assignees -R o/r')
+    expect((await ui.find({ type: 'Text', text: /^#12 · / }))?.text).toBe('#12 · CSV export of the library')
+    const doc = (await ui.find({ key: 'doc' }))?.text ?? ''
+    expect(doc).toContain('**Open** · opened by @sam on 2026-10-01 · the proposal names it')
+    expect(doc).toContain('Labels: `feature` · Assigned: @dana')
+    expect(doc).toContain('Export a CSV.')
+    expect(await ui.find({ key: 'external' })).toBeUndefined()
+    await ui.press({ key: 'browser' })
+    expect(state.runs.at(-1)).toBe('xdg-open https://github.com/o/r/issues/12')
+    await ui.press({ key: 'back' })
+
+    // An issue gh cannot read says why, and still offers its page.
+    await ui.press({ key: 'plan:other/lib#7' })
+    expect((await ui.find({ key: 'doc' }))?.text).toContain('Cannot read other/lib#7 with gh: not found.')
+    await ui.press({ key: 'browser' })
+    expect(state.runs.at(-1)).toBe('xdg-open https://github.com/other/lib/issues/7')
+    await ui.unmount()
+  })
+
+  test('without gh: no PR stage, issues without state, and verify before the archive', PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
+    const state = world(on, GH_FILES, '34-csv-export')
+    state.status = { 'gh-change': GH_STATUS }
+    state.isGhMissing = true
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toBe(
+      '–  Explore › ✔  Issues › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  Archive',
+    )
+    expect((await ui.find({ type: 'Text', text: /^⚠/ }))?.text).toBe('⚠  GitHub: gh is not installed, so the issues show no state')
+    await ui.press({ key: 'fold:plan' })
+    expect((await ui.find({ key: 'plan:#12' }))?.text).toBe('[?] #12  CSV export')
+    expect((await ui.find({ key: 'plan:#34' }))?.text).toBe('[?] #34   · branch')
+    expect(await ui.find({ key: 'pr' })).toBeUndefined()
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify gh-change')
+    expect(state.runs.filter(run => run.startsWith('gh ') && run !== 'gh --version')).toEqual([])
+    await ui.unmount()
+  })
+
+  test("the tasks come from the files the schema's apply.tracks names", PRIMARY, async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
+    const tracked = TEAM_SCHEMA_YAML.replace('tracks: tasks.md', "tracks: 'work/**/*.md'")
+    const state = world(
+      on,
+      {
+        '/pkg/schemas/team-flow/schema.yaml': tracked,
+        [`${GH}/.openspec.yaml`]: 'schema: team-flow\ncreated: 2026-10-31\n',
+        [`${GH}/proposal.md`]: '## Why\n',
+        [`${GH}/tasks.md`]: '## 9. Not tracked\n\n- [ ] 9.1 Never shown\n',
+        [`${GH}/work/backend.md`]: '## 1. Backend\n\n- [x] 1.1 Writer\n- [ ] 1.2 Status file\n',
+        [`${GH}/work/ui/dialog.md`]: '## 2. Dialog\n\n- [ ] 2.1 Picker\n',
+      },
+      'main',
+    )
+    state.status = { 'gh-change': { ...GH_STATUS, schemaName: 'team-flow' } }
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Text', text: /Apply 1\/3/ }))?.text).toBe(' ▶  Apply 1/3 ')
+    expect(await ui.find({ key: 'group:1' })).toBeDefined()
+    expect(await ui.find({ key: 'group:2' })).toBeDefined()
+    expect(await ui.find({ key: 'group:9' })).toBeUndefined()
+
+    // A schema without apply.tracks tracks no tasks, as the CLI does.
+    state.files.set('/pkg/schemas/team-flow/schema.yaml', TEAM_SCHEMA_YAML.replace("  tracks: tasks.md\n", ''))
+    await $.command.run(typed('openspec-board', ''))
+    await clock.advance(300)
+    expect(await ui.find({ key: 'group:1' })).toBeUndefined()
     await ui.unmount()
   })
 })

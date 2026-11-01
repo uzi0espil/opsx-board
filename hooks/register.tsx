@@ -49,6 +49,7 @@ import {
   parseVerifyVerdict,
   phaseOfCommand,
 } from './parse'
+import { collectIssues, issueDoc, repoOfUrl } from './github'
 import {
   collectDesigns,
   collectGit,
@@ -59,6 +60,7 @@ import {
   projectSchema,
   readFile,
   signature,
+  withoutGithubWarnings,
 } from './sources'
 import { PANE, renderPane, renderReader } from './view'
 
@@ -422,14 +424,7 @@ async function refresh($: Engine, request: RefreshRequest): Promise<void> {
     // Only git or the pull request is due: refresh those, and run no openspec CLI.
     const collected =
       isSame && request.isForced !== true && previous !== null && known !== null
-        ? {
-            snap: {
-              ...previous,
-              ...(await collectGit($, dir, binding.change, previous, isGitDue, isPrDue, known.commits, previous.archivedAs)),
-              refreshedAt: now,
-            },
-            hints: known,
-          }
+        ? { snap: await refreshGit($, dir, previous, known, isGitDue, isPrDue, now), hints: known }
         : await collectSnapshot($, dir, binding.change, { runs: live.designRuns, previous, isGitDue, isPrDue, now })
     const snap = collected.snap
     // The fingerprint names the files of the hints; new hints may name other files.
@@ -883,10 +878,48 @@ async function showBoard($: Engine, from: string | undefined): Promise<void> {
   }
 }
 
-/** A work item's block from the file that holds it, else from that file's history. */
+/**
+ * The branch, the commits, and the pull request of a snapshot whose files did not change, and
+ * its GitHub issues, which the branch and the pull request may name. The issues keep their
+ * cache time, so this asks `gh` only for a stale one.
+ */
+async function refreshGit(
+  $: Engine,
+  dir: string,
+  previous: Snapshot,
+  hints: BoardHints,
+  isGitDue: boolean,
+  isPrDue: boolean,
+  now: number,
+): Promise<Snapshot> {
+  const git = await collectGit($, dir, previous.change, previous, { isGitDue, isPrDue, hints, archivedAs: previous.archivedAs, now })
+  const github = hints.plan?.github
+  if (github === undefined) {
+    return { ...previous, ...git, refreshedAt: now }
+  }
+  const files = previous.planning.filter(item => item.issue === undefined)
+  const proposal = previous.planning.filter(item => item.issue?.via === 'proposal')
+  const issues = await collectIssues($, dir, github, proposal, git.branch, git.pr, now)
+
+  return {
+    ...previous,
+    ...git,
+    planning: [...files, ...issues.items],
+    warnings: [...withoutGithubWarnings(previous.warnings), ...issues.warnings],
+    refreshedAt: now,
+  }
+}
+
+/** A GitHub issue as `gh` reads it now; a file's work item as its block in that file, else in that file's history. */
 async function showPlanning($: Engine, item: PlanningItem): Promise<void> {
   const dir = await sessionCwd($)
   const hints = await currentHints($)
+  if (item.issue !== undefined) {
+    const snap = await read($, snapshotAtom)
+    const doc = await issueDoc($, dir, item, hints.plan?.github?.repo ?? repoOfUrl(snap?.pr?.url))
+    await showDoc($, { ...doc, from: `plan:${item.id}` })
+    return
+  }
   const source = hints.plan?.sources.find(candidate => candidate.file === item.file)
   const files = [item.file, source?.history].filter((file): file is string => file !== undefined)
   for (const file of files) {

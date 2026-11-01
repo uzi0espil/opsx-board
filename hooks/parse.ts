@@ -1,8 +1,21 @@
 // Pure parsers for the files and outputs the OpenSpec workflow writes. No `$` here.
 // What a project adds to OpenSpec (its planning items, designs, verdicts, and commit
 // subjects) is read with the patterns of its board.yaml hints.
-import type { BoardHints, Commit, CommitHints, CommitKind, DesignHints, Phase, PlanHints, PlanningItem, TaskGroup, Verdict, VerdictHints } from '../types'
-import { hintRegex, isSafeId, sectionHeading } from './schema'
+import type {
+  BoardHints,
+  Commit,
+  CommitHints,
+  CommitKind,
+  DesignHints,
+  IssueRef,
+  Phase,
+  PlanHints,
+  PlanningItem,
+  TaskGroup,
+  Verdict,
+  VerdictHints,
+} from '../types'
+import { hintRegex, isRepoName, isSafeId, sectionHeading } from './schema'
 
 // The checkbox pattern of the OpenSpec CLI (dist/utils/task-progress.js).
 // Only `x` / `X` counts as done; `[~]`, `[-]` and `[ ]` do not.
@@ -96,9 +109,62 @@ export const readVerdict = (md: string, artifact: string, hints: VerdictHints): 
   return { artifact, value: known, level, note, next: level === 'block' ? hints.next : undefined }
 }
 
+// ── GitHub issues ───────────────────────────────────────────────────────────
+
+const REPO = '[A-Za-z0-9][A-Za-z0-9-]{0,38}/[\\w.-]{1,100}'
+const ISSUE_URL = new RegExp(`https://github\\.com/(${REPO})/issues/(\\d{1,9})(?![\\w/])`, 'g')
+// `#12` or `owner/name#12`, not inside a word, a path, a heading, an anchor such as
+// `#12-notes`, or an HTML entity.
+const ISSUE_REF = new RegExp(`(?<![\\w/#&.-])(?:(${REPO}))?#(\\d{1,9})(?![\\w-])`, 'g')
+
+/** The id the board shows for an issue: `#12`, or `owner/name#12` for another repository. */
+export const issueId = (ref: IssueRef): string => `${ref.repo ?? ''}#${ref.number}`
+
+/** The GitHub issues a line names, in their order: issue URLs, `owner/name#12`, and `#12`. */
+export const issueRefs = (text: string): IssueRef[] => {
+  const found: { at: number; ref: IssueRef }[] = []
+  const rest = text.replace(ISSUE_URL, (match, repo: string, number: string, at: number) => {
+    found.push({ at, ref: { repo, number: Number(number) } })
+
+    return ' '.repeat(match.length)
+  })
+  for (const match of rest.matchAll(ISSUE_REF)) {
+    const repo = match[1]
+    if (repo === undefined || isRepoName(repo)) {
+      found.push({ at: match.index ?? 0, ref: { repo, number: Number(match[2]) } })
+    }
+  }
+  const seen = new Set<string>()
+
+  return found
+    .sort((a, b) => a.at - b.at)
+    .map(item => item.ref)
+    .filter(ref => ref.number > 0 && !seen.has(issueId(ref)) && seen.add(issueId(ref)) !== undefined)
+}
+
+/** The issue number a branch name holds, by the branch pattern of the hints: its first group. */
+export const issueFromBranch = (branch: string | undefined, pattern: string | undefined): number | undefined => {
+  const digits = branch === undefined || pattern === undefined ? undefined : hintRegex(pattern, '')?.exec(branch)?.[1]
+
+  return digits !== undefined && /^\d{1,9}$/.test(digits) && Number(digits) > 0 ? Number(digits) : undefined
+}
+
+/** What a line says beside the one issue it names: its text without the list marker, the reference, and bold marks. */
+const issueTitle = (line: string, refs: number): string =>
+  refs !== 1
+    ? ''
+    : line
+        .replace(ISSUE_URL, '')
+        .replace(ISSUE_REF, '')
+        .replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s*(?:\[[^\]]?\]\s*)?/, '')
+        .replace(/\*\*|__/g, '')
+        .replace(/^[\s·—–:-]+|[\s·—–:-]+$/g, '')
+        .slice(0, 120)
+
 /**
  * The work items a proposal names in its planning section: each checkbox line whose bold text
- * starts with an ID of one of the sources, and a `None — <reason>` line.
+ * starts with an ID of one of the sources, and a `None — <reason>` line. With a GitHub source,
+ * each other line gives the issues it names; their state comes from `gh` later.
  */
 export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningItem[]; none?: string } => {
   const body = section(md, sectionHeading(hints.section))
@@ -109,6 +175,7 @@ export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningIt
 
     return pattern === undefined ? [] : [{ source, pattern }]
   })
+  const issues = new Set<string>()
   for (const line of body ?? []) {
     const found = sources.map(({ source, pattern }) => ({ source, item: pattern.exec(line) })).find(match => match.item)
     if (found?.item) {
@@ -125,6 +192,12 @@ export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningIt
     const empty = /^None\s*[—–-]\s*(.*)$/.exec(line.trim())
     if (empty) {
       none = empty[1] ?? ''
+      continue
+    }
+    const refs = hints.github === undefined ? [] : issueRefs(line)
+    for (const ref of refs.filter(item => !issues.has(issueId(item)))) {
+      issues.add(issueId(ref))
+      items.push({ id: issueId(ref), title: issueTitle(line, refs.length), issue: { ...ref, via: 'proposal' } })
     }
   }
 

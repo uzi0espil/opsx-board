@@ -245,13 +245,17 @@ export const stagesOf = (
     note: live.reviewCounts !== undefined ? findingsNote(live.reviewCounts) : live.verifyVerdict,
   }
 
-  const pr: Stage = {
-    key: 'pr',
-    label: 'PR',
-    isOptional: false,
-    state: hasPr || isArchived ? 'done' : 'pending',
-    note: snap?.pr === undefined ? undefined : `#${snap.pr.number} ${snap.pr.state.toLowerCase()}`,
-  }
+  // Without gh the board cannot see a pull request, so it shows no PR stage.
+  const pr: Stage | undefined =
+    snap?.isGhMissing === true && !hasPr
+      ? undefined
+      : {
+          key: 'pr',
+          label: 'PR',
+          isOptional: false,
+          state: hasPr || isArchived ? 'done' : 'pending',
+          note: snap?.pr === undefined ? undefined : `#${snap.pr.number} ${snap.pr.state.toLowerCase()}`,
+        }
 
   const archive: Stage = {
     key: 'archive',
@@ -407,21 +411,27 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
   // A task left `[~]` or `[-]` does not hold the change back: the repository keeps owner steps open.
   const tasks = snap.groups.flatMap(group => group.tasks)
   const isTasksSettled = tasks.length > 0 && tasks.every(task => task.mark !== ' ')
-  if (!isTasksSettled || byKey('pr')?.state !== 'done') {
+  // Without a PR stage (no gh), the change goes from its tasks to verify, then to the archive.
+  const prStage = byKey('pr')
+  if (!isTasksSettled || (prStage !== undefined && prStage.state !== 'done')) {
     // The apply run of this session goes on to the pull request: it needs no hint.
     if (isApplyRun(live, snap)) {
       return undefined
     }
     const isStopped = live.command?.name === 'opsx:apply' && (live.stoppedAt ?? 0) >= live.command.at
-    const why = isStopped ? 'the apply run stopped. Apply again to go on' : 'tasks, review, or the pull request remain'
+    const why = isStopped ? 'the apply run stopped. Apply again to go on' : prStage === undefined ? 'tasks remain' : 'tasks, review, or the pull request remain'
 
     return { text: `/opsx:apply ${change}`, why: `${why}${pending}` }
   }
+  if (prStage === undefined && byKey('verify')?.state !== 'done') {
+    return { text: `/opsx:verify ${change}`, why: `the tasks are done. Verify the change before the archive${pending}` }
+  }
   const partial = tasks.filter(task => task.mark === '~').length
+  const ready = prStage === undefined ? 'the change is verified' : 'the pull request is open'
 
   return {
     text: `/opsx:archive ${change}`,
-    why: partial === 0 ? 'the pull request is open' : `the pull request is open; ${partial} ${partial === 1 ? 'task stays' : 'tasks stay'} [~]`,
+    why: partial === 0 ? ready : `${ready}; ${partial} ${partial === 1 ? 'task stays' : 'tasks stay'} [~]`,
   }
 }
 

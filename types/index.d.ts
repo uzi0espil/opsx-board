@@ -30,16 +30,37 @@ export type ArtifactRow = { id: string; status: string; outputPath?: string; req
 /** The verdict that a review artifact states, read with the verdict hints of board.yaml. */
 export type Verdict = { artifact: string; value: string; level: 'ok' | 'warn' | 'block'; note?: string; next?: string }
 
+/** A GitHub issue reference: `repo` is `owner/name`, absent for the repository of the working directory. */
+export type IssueRef = { repo?: string; number: number }
+
+/** Where the board found a GitHub issue: the proposal section, the branch name, or the pull request that closes it. */
+export type IssueVia = 'proposal' | 'branch' | 'pr'
+
 export type PlanningItem = {
   id: string
   title: string
   /** The file that holds the item, relative to the repository root. */
   file?: string
   mark?: string
+  /** A GitHub issue: its reference, where the board found it, and what `gh` gave. */
+  issue?: IssueRef & { via: IssueVia; url?: string; state?: string }
 }
 
 /** A work-item reference that a `file` provider resolves: an ID pattern and the file that holds the items. */
 export type WorkItemSource = { pattern: string; file: string; history?: string }
+
+/**
+ * The GitHub issues of a change, which `gh` reads: those the proposal section names, the one
+ * the branch name names, and those the pull request closes.
+ */
+export type GithubSource = {
+  /** `owner/name`: the repository of a bare `#N`. Else the one `gh` resolves from the working directory. */
+  repo?: string
+  /** A pattern whose first group is an issue number in the branch name. */
+  branch?: string
+  /** Whether the issues that the pull request closes count. */
+  isPrClosing: boolean
+}
 
 export type PlanHints = {
   label: string
@@ -49,6 +70,7 @@ export type PlanHints = {
   agent?: string
   isBeforeExplore: boolean
   sources: WorkItemSource[]
+  github?: GithubSource
 }
 
 export type DesignHints = {
@@ -129,7 +151,8 @@ export type Commit = {
   group?: string
 }
 
-export type PullRequest = { number: number; state: string; url: string }
+/** `closes`: the issues the pull request closes, when the hints ask for them. */
+export type PullRequest = { number: number; state: string; url: string; closes?: IssueRef[] }
 
 export type Snapshot = {
   change: string
@@ -155,6 +178,8 @@ export type Snapshot = {
   designs: DesignView[]
   commits: Commit[]
   pr?: PullRequest
+  /** True when `gh` is not installed: the board shows no PR stage and no GitHub issue state. */
+  isGhMissing?: boolean
   refreshedAt: number
   warnings: string[]
 }
@@ -218,9 +243,10 @@ export type Live = {
 /**
  * What the reader view of the board pane shows: a file it reads at each draw, or a text it
  * was handed. `from` is the key of the board row that opened it, where `← Board` returns.
+ * `url` is the page of the text, such as a GitHub issue, which a button opens in the browser.
  * Optional: a reader value written before this field existed survives a hot reload.
  */
-export type ReaderDoc = { title: string; path?: string; text?: string; from?: string }
+export type ReaderDoc = { title: string; path?: string; text?: string; from?: string; url?: string }
 
 export type BindingSource = 'command' | 'pinned' | 'list' | 'branch' | 'pick'
 

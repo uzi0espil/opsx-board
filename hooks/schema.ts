@@ -3,7 +3,8 @@
 // A board.yaml can come with any repository, so its check is strict. It names built-in providers
 // only, its paths stay inside the repository, a design opens only a document file, and each
 // pattern must compile and stay short. A part that fails the check is dropped with a warning.
-import type { BoardHints, CommitHints, DesignHints, PlanHints, VerdictHints, WorkItemSource } from '../types'
+// A provider runs only the read commands the board holds itself: board.yaml names no command.
+import type { BoardHints, CommitHints, DesignHints, GithubSource, PlanHints, VerdictHints, WorkItemSource } from '../types'
 import { YamlError, parseYaml } from './yaml'
 
 export type SchemaArtifact = { id: string; generates: string; requires: string[] }
@@ -116,6 +117,9 @@ export const isSafePath = (path: string): boolean =>
 /** A design id or a work-item id that may name a folder: letters, digits, `_`, and `-`. */
 export const isSafeId = (id: string): boolean => /^[A-Za-z0-9][\w-]{0,63}$/.test(id)
 
+/** A GitHub repository as `owner/name`, the form `gh -R` takes. */
+export const isRepoName = (repo: string): boolean => /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[\w.-]{1,100}$/.test(repo) && !repo.endsWith('/..') && !repo.endsWith('/.')
+
 /** The pattern, when it compiles and is short; `{change}` stands for a change name. */
 export const checkPattern = (pattern: string | undefined, flags = ''): string | undefined => {
   if (pattern === undefined || pattern === '' || pattern.length > MAX_PATTERN) {
@@ -174,8 +178,27 @@ const patternHint = (check: Check, where: string, value: unknown, flags = ''): s
   return pattern
 }
 
-const readRefs = (check: Check, refs: unknown): { work: WorkItemSource[]; design?: Omit<DesignHints, 'label' | 'section' | 'skipArgs'> } => {
+type Refs = { work: WorkItemSource[]; github?: GithubSource; design?: Omit<DesignHints, 'label' | 'section' | 'skipArgs'> }
+
+/** The GitHub source of a work-item reference: an optional repository and branch pattern, and the pull request flag. */
+const githubRef = (check: Check, where: string, ref: Doc): GithubSource | undefined => {
+  const repo = asString(ref['repo'])
+  if (repo !== undefined && !isRepoName(repo)) {
+    check.warnings.push(`${where}: repo "${repo}" is not owner/name`)
+
+    return undefined
+  }
+  const pr = ref['pr']
+  if (pr !== undefined && typeof pr !== 'boolean') {
+    check.warnings.push(`${where}: pr must be true or false`)
+  }
+
+  return { repo, branch: patternHint(check, where, ref['branch']), isPrClosing: pr !== false }
+}
+
+const readRefs = (check: Check, refs: unknown): Refs => {
   const work: WorkItemSource[] = []
+  let github: GithubSource | undefined
   let design: Omit<DesignHints, 'label' | 'section' | 'skipArgs'> | undefined
   ;(Array.isArray(refs) ? refs : []).forEach((ref, index) => {
     const where = `refs[${index}]`
@@ -184,11 +207,21 @@ const readRefs = (check: Check, refs: unknown): { work: WorkItemSource[]; design
       return
     }
     const provider = asString(ref['provider']) ?? 'file'
-    if (provider !== 'file') {
-      check.warnings.push(`${where}: provider "${provider}" is not built in yet`)
+    const kind = asString(ref['kind'])
+    if (provider === 'github' && kind === 'work-item') {
+      if (github !== undefined) {
+        check.warnings.push(`${where}: only the first github reference counts`)
+        return
+      }
+      github = githubRef(check, where, ref)
       return
     }
-    const kind = asString(ref['kind'])
+    if (provider !== 'file') {
+      check.warnings.push(
+        provider === 'github' ? `${where}: provider "github" gives work items only` : `${where}: provider "${provider}" is not built in yet`,
+      )
+      return
+    }
     if (kind === 'work-item') {
       const pattern = patternHint(check, where, ref['pattern'])
       const file = pathHint(check, where, ref['file'])
@@ -227,7 +260,7 @@ const readRefs = (check: Check, refs: unknown): { work: WorkItemSource[]; design
     check.warnings.push(`${where}: kind "${kind ?? ''}" is not known`)
   })
 
-  return { work, design }
+  return { work, github, design }
 }
 
 function readVerdicts(check: Check, artifacts: unknown): Record<string, VerdictHints> {
@@ -340,6 +373,7 @@ export const readHints = (schema: string, text: string, file: string): BoardHint
         agent: asString(stage['agent']),
         isBeforeExplore: asString(stage['before']) === 'explore',
         sources: refs.work,
+        github: refs.github,
       }
       hints.plan = plan
     } else if (collects === 'design' && hints.design === undefined) {
