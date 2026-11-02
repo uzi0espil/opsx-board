@@ -241,7 +241,8 @@ async function artifactsFromSchema($: Engine, cwd: string, dir: string, schema: 
 
 /**
  * A cheap fingerprint of the change: its folder (each entry's time, and each subfolder's entry
- * count), the files its hints name, the designs of the session, and the hints files.
+ * count), the files its hints name, the designs of the session, and the hints files. Without an
+ * active folder, the folder is the change's archive folder, so an edit there shows too.
  */
 export async function signature(
   $: Engine,
@@ -250,8 +251,11 @@ export async function signature(
   hints: BoardHints | null,
   designViews: readonly string[],
 ): Promise<string> {
-  const dir = `${cwd}/openspec/changes/${change}`
-  const entries = await $.fs.list(dir).catch(() => [])
+  const active = `${cwd}/openspec/changes/${change}`
+  const activeEntries = await $.fs.list(active).catch(() => [])
+  const archivedAs = activeEntries.length > 0 ? undefined : await findArchived($, cwd, change)
+  const dir = archivedAs === undefined ? active : `${cwd}/openspec/changes/archive/${archivedAs}`
+  const entries = archivedAs === undefined ? activeEntries : await $.fs.list(dir).catch(() => [])
   const folder = await Promise.all(
     [...entries]
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -275,7 +279,15 @@ export async function signature(
     ...[hints?.file, user].map(path => (path === undefined ? '-' : mtime($, path))),
   ])
 
-  return [entries.length === 0 ? '-' : folder.join(','), ...parts].join('|')
+  return [archivedAs ?? '', entries.length === 0 ? '-' : folder.join(','), ...parts].join('|')
+}
+
+/** Whether a folder holds the change, active or archived. */
+export async function hasChange($: Engine, cwd: string, change: string): Promise<boolean> {
+  const active = `${cwd}/openspec/changes/${change}`
+  const markers = await Promise.all(CHANGE_MARKERS.map(file => $.fs.exists(`${active}/${file}`).catch(() => false)))
+
+  return markers.some(Boolean) || (await findArchived($, cwd, change)) !== undefined
 }
 
 async function findArchived($: Engine, cwd: string, change: string): Promise<string | undefined> {
@@ -444,7 +456,16 @@ async function mergedPullRequest($: Engine, cwd: string, archivedAs: string, bra
   if (number === undefined) {
     return branch === undefined || !/^[0-9a-f]{40}$/.test(hash) ? undefined : branchPullRequest($, cwd, branch, hash)
   }
-  const ran = await run($, ['gh', 'pr', 'view', number, '--json', 'number,state,url'], cwd)
+
+  return viewPullRequest($, cwd, Number(number))
+}
+
+/** A pull request by its number, as `gh` reads it now; the issues it closes stay with the caller. */
+async function viewPullRequest($: Engine, cwd: string, number: number): Promise<PullRequest | undefined> {
+  if (!Number.isSafeInteger(number) || number < 1) {
+    return undefined
+  }
+  const ran = await run($, ['gh', 'pr', 'view', String(number), '--json', 'number,state,url'], cwd)
   try {
     return ran?.exitCode === 0 ? (JSON.parse(ran.stdout) as PullRequest) : undefined
   } catch {
@@ -481,6 +502,10 @@ export async function collectGit(
   }
   if (isGhMissing !== true && archivedAs !== undefined && pr === undefined && isGitDue) {
     pr = await mergedPullRequest($, cwd, archivedAs, branch)
+  } else if (isGhMissing !== true && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
+    // The change was archived on its branch before the merge: read the pull request until it closes.
+    const viewed = await viewPullRequest($, cwd, pr.number)
+    pr = viewed === undefined ? pr : { ...pr, ...viewed }
   }
 
   return { branch, commits, pr, isGhMissing }
@@ -642,9 +667,11 @@ export async function collectSnapshot(
   if (tasks.warning !== undefined) {
     warnings.push(tasks.warning)
   }
-  const previous = options.previous?.change === change ? options.previous : null
+  // The git state of another change, or of another folder (a worktree the session left), does not count.
+  const previous = options.previous?.change === change && options.previous.root === cwd ? options.previous : null
   const git = await collectGit($, cwd, change, previous, {
-    isGitDue: options.isGitDue || previous === null,
+    // A change that was just archived has a new commit to find, and maybe the pull request that merged it.
+    isGitDue: options.isGitDue || previous === null || previous.archivedAs !== archivedAs,
     isPrDue: options.isPrDue,
     hints,
     archivedAs,
