@@ -30,6 +30,12 @@ A session explores in the context of the change that it is bound to. In a folder
 one active change, the session binds that change by itself, so its explore tokens count for that
 change.
 
+The board reads the folder that the session works in, and it follows the session into a worktree
+and out of it. A session can leave a worktree that still holds the bound change, for a folder
+without that change. Then the board keeps reading the change in the worktree. When the session
+leaves a worktree that it removed, the board reads the change in the new folder, also from the
+archive there.
+
 Propose and Design stay active until the next step starts, because the person reviews their
 output and asks for changes. When every artifact exists, Propose shows `in review` until one of
 these signals shows that Apply started:
@@ -150,7 +156,8 @@ The stages come from OpenSpec:
   tasks, as the CLI does.
 - **PR** comes from `gh`. Without `gh`, the board shows no PR stage. An archived change finds
   the pull request that its squash commit names. In a checkout of the change's own branch, it
-  finds the pull request of the branch whose commits hold the archive commit.
+  finds the pull request of the branch whose commits hold the archive commit. While that pull
+  request is open, the board reads it again once a minute, until it is merged or closed.
 
 A `board.yaml` adds what OpenSpec does not know. The board reads the first one it finds:
 
@@ -281,4 +288,4 @@ effect in the next session.
 
 The tests use the `board.yaml` of a demo project. Other tests cover a plain `spec-driven`
 change, an archived change of a forked schema, GitHub issues with and without `gh`, tasks from
-`apply.tracks`, and the `reportTool` setting.
+`apply.tracks`, a session that leaves a worktree, and the `reportTool` setting.

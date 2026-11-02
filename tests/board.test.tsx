@@ -64,6 +64,10 @@ type World = {
   issues: Record<string, object | string>
   /** The commit (`%H<tab>%s`) that added the archive folder of csv-import. */
   archiveLog: string
+  /** The commit that added another archive folder, by the folder's name. */
+  archiveLogs: Record<string, string>
+  /** What `gh pr view <N>` gives, by number; #226 is merged unless this names it. */
+  prViews: Record<number, object>
 }
 
 // The engine hands a hook the path as the host resolves it (`C:\repo\...` on Windows).
@@ -73,7 +77,8 @@ const norm = (path: string): string =>
     .replace(/^[A-Za-z]:(?=\/)/, '')
     .replace(/\/+/g, '/')
 
-const dirEntry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 1, mtimeMs: 1, isLink: false })
+// A file's time is its length, as `fs.stat` gives it: an edit that changes the length shows.
+const dirEntry = (name: string, kind: 'file' | 'dir', mtimeMs = 1) => ({ name, kind, size: 1, mtimeMs, isLink: false })
 
 /** A repository in memory, the openspec and git CLIs, and the engine calls the board makes. */
 function world(on: On, files: Record<string, string>, branch = 'worktree-demo-change'): World {
@@ -95,6 +100,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     isGhMissing: false,
     issues: GITHUB_ISSUES,
     archiveLog: `${ARCHIVE_HASH}\tfeat(import): CSV import of a library (WI-7) (#226) [skip ci]\n`,
+    archiveLogs: {},
+    prViews: {},
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -107,7 +114,7 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
       }
     }
 
-    return [...names].map(([name, kind]) => dirEntry(name, kind))
+    return [...names].map(([name, kind]) => dirEntry(name, kind, kind === 'file' ? (state.files.get(`${base}${name}`) ?? '').length : 1))
   }
   const isDir = (path: string) => listDir(path).length > 0
 
@@ -200,7 +207,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     // A project schema resolves to its folder, a package schema to the package's folder.
     const which = /^openspec schema which ([\w.-]+) --json$/.exec(command)
     if (which) {
-      const dir = [`${CWD}/openspec/schemas/${which[1]}`, `/pkg/schemas/${which[1]}`].find(path => state.files.has(`${path}/schema.yaml`))
+      const root = norm(e.init?.cwd ?? CWD)
+      const dir = [`${root}/openspec/schemas/${which[1]}`, `/pkg/schemas/${which[1]}`].find(path => state.files.has(`${path}/schema.yaml`))
 
       return dir === undefined
         ? ran('', 1)
@@ -215,11 +223,16 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     if (command.startsWith('xdg-open ')) {
       return ran('')
     }
-    if (command === 'git log -1 --diff-filter=A --format=%H%x09%s -- openspec/changes/archive/2026-10-22-csv-import') {
-      return ran(state.archiveLog)
+    const added = /^git log -1 --diff-filter=A --format=%H%x09%s -- openspec\/changes\/archive\/([\w-]+)$/.exec(command)
+    if (added) {
+      return added[1] === '2026-10-22-csv-import' ? ran(state.archiveLog) : ran(state.archiveLogs[added[1] ?? ''] ?? '')
     }
-    if (command === 'gh pr view 226 --json number,state,url') {
-      return ran('{"number":226,"state":"MERGED","url":"https://github.com/o/r/pull/226"}')
+    const view = /^gh pr view (\d+) --json number,state,url$/.exec(command)
+    if (view) {
+      const number = Number(view[1])
+      const found = state.prViews[number] ?? (number === 226 ? { number: 226, state: 'MERGED', url: 'https://github.com/o/r/pull/226' } : undefined)
+
+      return found === undefined ? ran('', 1) : ran(JSON.stringify(found))
     }
     if (command.startsWith('gh pr list')) {
       return ran(state.prs)
@@ -247,6 +260,22 @@ const DEMO_FILES: Record<string, string> = {
   [`${CWD}/designs/export-dialog/artifact.html`]: '<html></html>',
   [`${CWD}/designs/export-dialog/decisions.md`]: DECISIONS_MD,
   [`${CWD}/designs/export-dialog/screenshots/desktop-1280.png`]: 'png',
+}
+
+/** The files of a repository under another root, such as a worktree's folder. */
+const rooted = (files: Record<string, string>, root: string): Record<string, string> =>
+  Object.fromEntries(Object.entries(files).map(([path, text]) => [path.startsWith(`${CWD}/`) ? `${root}${path.slice(CWD.length)}` : path, text]))
+
+/** `openspec archive`: the folder of demo-change moves into the archive, and the CLI no longer knows it. */
+function archive(state: World, root: string, name: string): void {
+  const active = `${root}/openspec/changes/demo-change`
+  for (const [path, text] of [...state.files]) {
+    if (path.startsWith(`${active}/`)) {
+      state.files.delete(path)
+      state.files.set(path.replace(active, `${root}/openspec/changes/archive/${name}`), text)
+    }
+  }
+  delete state.status['demo-change']
 }
 
 const USAGE = { input_tokens: 1000, output_tokens: 2000, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 500 }
@@ -673,6 +702,140 @@ describe('opsx-board', () => {
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  PR › ✔  Archive')
     expect((await board.find({ key: 'pr' }))?.text).not.toContain('#231')
+    await board.unmount()
+  })
+
+  test('a change archived on its branch reads its open pull request again until the merge', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'demo-change')
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    // The work on the branch makes the pull request due once a minute.
+    await clock.advance(65_000)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ key: 'pr' }))?.text).toContain('#227 open')
+
+    archive(state, CWD, '2026-10-22-demo-change')
+    await clock.advance(4500)
+    expect((await board.find({ type: 'Text', text: /archived/ }))?.text).toBe(' ✔  archived ')
+    expect((await board.find({ key: 'pr' }))?.text).toContain('#227 open')
+
+    // The merge: the next read of the pull request sees it.
+    state.prViews[227] = { number: 227, state: 'MERGED', url: 'https://github.com/o/r/pull/227' }
+    await clock.advance(65_000)
+    expect((await board.find({ key: 'pr' }))?.text).toContain('#227 merged')
+    expect(state.toasts).toContain('demo-change archived')
+
+    // A merged pull request is not read again.
+    const isView = (run: string) => run === 'gh pr view 227 --json number,state,url'
+    const reads = state.runs.filter(isView).length
+    await clock.advance(5 * 60_000)
+    expect(state.runs.filter(isView)).toHaveLength(reads)
+    await board.unmount()
+  })
+
+  test('an edit in the archive folder of a change shows', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'main')
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    archive(state, CWD, '2026-10-22-demo-change')
+    await clock.advance(4500)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await board.press({ key: 'fold:apply' })
+    expect((await board.find({ key: 'group:2' }))?.text).toContain('0/3')
+
+    // Two tasks are checked after the archive, each with a note.
+    const tasks = `${CWD}/openspec/changes/archive/2026-10-22-demo-change/tasks.md`
+    state.files.set(tasks, (state.files.get(tasks) ?? '').replace('- [ ] 2.1', '- [x] 2.1 (owner)').replace('- [ ] 2.2', '- [x] 2.2 (owner)'))
+    await clock.advance(4500)
+    expect((await board.find({ key: 'group:2' }))?.text).toContain('2/3')
+    await board.unmount()
+  })
+
+  test('the session leaves a worktree it removed: the board follows it to the archive in the main checkout', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const worktree = `${CWD}/.claude/worktrees/demo`
+    const state = world(on, rooted(DEMO_FILES, worktree), 'demo-change')
+    let here = worktree
+    on('session.cwd', () => ({ value: here }))
+    await $.session.start({ cwd: worktree, surface: 'terminal', isInteractive: true })
+    await clock.advance(65_000)
+    archive(state, worktree, '2026-10-22-demo-change')
+    await clock.advance(4500)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ type: 'Text', text: /^gated-spec-driven/ }))?.text).toBe('gated-spec-driven · demo-change')
+    expect((await board.find({ type: 'Text', text: /archived/ }))?.text).toBe(' ✔  archived ')
+
+    // The worktree goes, and the session is back in the main checkout, before its pull.
+    for (const path of [...state.files.keys()]) {
+      if (path.startsWith(`${worktree}/`)) {
+        state.files.delete(path)
+      }
+    }
+    for (const [path, text] of Object.entries(DEMO_FILES)) {
+      if (!path.startsWith(`${CHANGE}/`)) {
+        state.files.set(path, text)
+      }
+    }
+    state.branch = 'main'
+    here = CWD
+    await clock.advance(4500)
+    expect((await board.find({ type: 'Text', text: /^fills the prompt/ }))?.text).toContain('no change folder yet')
+
+    // The pull brings the archive, with the squash commit that names the pull request.
+    for (const [path, text] of Object.entries(DEMO_FILES)) {
+      if (path.startsWith(`${CHANGE}/`)) {
+        state.files.set(path.replace(CHANGE, `${CWD}/openspec/changes/archive/2026-10-22-demo-change`), text)
+      }
+    }
+    state.archiveLogs['2026-10-22-demo-change'] = `${ARCHIVE_HASH}\tfeat(export): CSV export (#227)\n`
+    state.prViews[227] = { number: 227, state: 'MERGED', url: 'https://github.com/o/r/pull/227' }
+    await clock.advance(4500)
+    expect((await board.find({ type: 'Text', text: /^gated-spec-driven/ }))?.text).toBe('gated-spec-driven · main')
+    expect((await board.find({ type: 'Text', text: /archived/ }))?.text).toBe(' ✔  archived ')
+    expect((await board.find({ key: 'pr' }))?.text).toContain('#227 merged')
+    await board.press({ key: 'fold:apply' })
+    expect((await board.find({ key: 'group:0' }))?.text).toContain('3/3')
+    await board.unmount()
+  })
+
+  test('the session leaves a worktree it kept: the board reads the change there while the main checkout lacks it', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const worktree = `${CWD}/.claude/worktrees/demo`
+    // The main checkout has neither the change nor the backlog the change names.
+    const main = Object.fromEntries(Object.entries(DEMO_FILES).filter(([path]) => !path.startsWith(`${CHANGE}/`) && !path.endsWith('/docs/backlog.md')))
+    const state = world(on, { ...rooted(DEMO_FILES, worktree), ...main }, 'demo-change')
+    let here = worktree
+    on('session.cwd', () => ({ value: here }))
+    on('command.run', () => ({ text: '' }))
+    await $.session.start({ cwd: worktree, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('opsx:apply', 'demo-change'))
+    await clock.advance(4500)
+    here = CWD
+    await clock.advance(9000)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ type: 'Text', text: /^gated-spec-driven/ }))?.text).toBe('gated-spec-driven · demo-change')
+    expect((await board.find({ key: 'group:0' }))?.text).toContain('3/3')
+    expect(await board.find({ type: 'Text', text: /no change folder yet/ })).toBeUndefined()
+    await board.press({ key: 'fold:propose' })
+    await board.press({ key: 'artifact:proposal' })
+    expect((await board.find({ type: 'Text', text: /proposal\.md$/ }))?.text).toContain(`${worktree}/openspec/changes/demo-change/proposal.md`)
+    await board.press({ key: 'back' })
+    // A planning item reads the backlog of the folder that holds the change.
+    await board.press({ key: 'fold:plan' })
+    await board.press({ key: 'plan:WI-12' })
+    expect((await board.find({ key: 'doc' }))?.text).toContain('**WI-12 · CSV export')
+    await board.press({ key: 'back' })
+
+    // Once the main checkout holds the change too, the board reads it there, with the same files.
+    for (const [path, text] of Object.entries(DEMO_FILES)) {
+      state.files.set(path, text)
+    }
+    await clock.advance(4500)
+    await board.press({ key: 'artifact:proposal' })
+    expect((await board.find({ type: 'Text', text: /proposal\.md$/ }))?.text).toContain(`${CHANGE}/proposal.md`)
+    expect((await board.find({ type: 'Text', text: /proposal\.md$/ }))?.text).not.toContain(worktree)
     await board.unmount()
   })
 

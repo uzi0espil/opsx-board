@@ -55,6 +55,7 @@ import {
   collectGit,
   collectSnapshot,
   currentBranch,
+  hasChange,
   loadHints,
   openExternal,
   projectSchema,
@@ -129,6 +130,42 @@ async function sessionCwd($: Engine): Promise<string> {
   cwd ||= await $.session.cwd()
 
   return cwd
+}
+
+/**
+ * Follows the session into or out of a worktree, and says whether it moved. Only the board's
+ * timer calls this: a timer reads the session's folder, a subagent's hook its own.
+ */
+async function followCwd($: Engine): Promise<boolean> {
+  const now = await $.session.cwd().catch(() => '')
+  if (cwd === '' || now === '' || now === cwd) {
+    return false
+  }
+  cwd = now
+  lastSignature = ''
+  lastGitAt = 0
+  lastPrAt = 0
+
+  return true
+}
+
+/**
+ * The folder that holds the bound change: the session's, unless the session moved and only the
+ * folder it left still holds the change, such as a worktree it kept.
+ */
+async function changeRoot($: Engine, dir: string, change: string, previous: Snapshot | null): Promise<string> {
+  const before = previous?.change === change ? previous.root : undefined
+  if (before === undefined || before === dir || (await hasChange($, dir, change))) {
+    return dir
+  }
+
+  return (await hasChange($, before, change)) ? before : dir
+}
+
+async function tick($: Engine): Promise<void> {
+  const isMoved = await followCwd($)
+  void flushLedger($, false)
+  await refresh($, isMoved ? { isForced: true, isGit: true, isPr: true } : {})
 }
 
 /**
@@ -397,22 +434,25 @@ async function refresh($: Engine, request: RefreshRequest): Promise<void> {
       }
       return
     }
-    const fingerprint = await signature($, dir, binding.change, known, designViews)
+    const root = await changeRoot($, dir, binding.change, previous)
+    const fingerprint = await signature($, root, binding.change, known, designViews)
     const isGitDue = request.isGit === true || now - lastGitAt > GIT_MS
+    // A change with work on its branch, or one archived on its branch whose pull request is still open.
     const isMidFlight =
       previous !== null &&
-      previous.archivedAs === undefined &&
-      previous.commits.some(commit => commit.kind === 'artifacts' || commit.kind === 'task')
+      (previous.archivedAs === undefined
+        ? previous.commits.some(commit => commit.kind === 'artifacts' || commit.kind === 'task')
+        : previous.pr?.state === 'OPEN')
     const isPrDue = request.isPr === true || (isMidFlight && now - lastPrAt > PR_MS)
-    const isSame = fingerprint === lastSignature && previous?.change === binding.change
+    const isSame = fingerprint === lastSignature && previous?.change === binding.change && previous.root === root
     if (isSame && request.isForced !== true && !isGitDue && !isPrDue) {
       return
     }
     // Only git or the pull request is due: refresh those, and run no openspec CLI.
     const collected =
       isSame && request.isForced !== true && previous !== null && known !== null
-        ? { snap: await refreshGit($, dir, previous, known, isGitDue, isPrDue, now), hints: known }
-        : await collectSnapshot($, dir, binding.change, { runs: live.designRuns, previous, isGitDue, isPrDue, now })
+        ? { snap: await refreshGit($, root, previous, known, isGitDue, isPrDue, now), hints: known }
+        : await collectSnapshot($, root, binding.change, { runs: live.designRuns, previous, isGitDue, isPrDue, now })
     const snap = collected.snap
     // The fingerprint names the files of the hints; new hints may name other files.
     const isNewHints = JSON.stringify(collected.hints) !== JSON.stringify(known)
@@ -515,10 +555,7 @@ async function startSession($: Engine, dir: string): Promise<void> {
     })
   }
   cwd = dir
-  $.clock.every(TICK_MS, () => {
-    void refresh($, {})
-    void flushLedger($, false)
-  })
+  $.clock.every(TICK_MS, () => void tick($))
   $.clock.every(GIT_MS, () => void refreshOthers($))
   $.clock.after(200, () => {
     void refresh($, { isForced: true, isGit: true })
@@ -899,10 +936,11 @@ async function refreshGit(
 
 /** A GitHub issue as `gh` reads it now; a file's work item as its block in that file, else in that file's history. */
 async function showPlanning($: Engine, item: PlanningItem): Promise<void> {
-  const dir = await sessionCwd($)
+  const snap = await read($, snapshotAtom)
+  // The planning files of the folder that holds the change.
+  const dir = snap?.root || (await sessionCwd($))
   const hints = await currentHints($)
   if (item.issue !== undefined) {
-    const snap = await read($, snapshotAtom)
     const doc = await issueDoc($, dir, item, hints.plan?.github?.repo ?? repoOfUrl(snap?.pr?.url))
     await showDoc($, { ...doc, from: `plan:${item.id}` })
     return
