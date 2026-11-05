@@ -481,6 +481,7 @@ describe('opsx-board', () => {
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     await $.command.run(typed('designer', 'update export-dialog'))
+    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't-d', usage: { ...USAGE, model: 'm' }, reason: 'answer' })
     await clock.advance(4500)
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -491,12 +492,12 @@ describe('opsx-board', () => {
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:propose')
     await ui.unmount()
 
-    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't-d', usage: { ...USAGE, model: 'm' }, reason: 'answer' })
     for (const [path, text] of Object.entries(DEMO_FILES)) {
       state.files.set(norm(path), text)
     }
     await $.command.run(typed('opsx:propose', 'demo-change'))
-    await clock.advance(6000)
+    // The ledger writes at most once per 5 s, and the `_pre` write has just happened.
+    await clock.advance(12_000)
     const ledger = JSON.parse(state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json') ?? '{}')
     expect(ledger.main?.design).toEqual({ input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 })
   })
@@ -513,6 +514,8 @@ describe('opsx-board', () => {
     on('command.run', () => ({ text: '' }))
     on('turn.complete', () => ({ text: '' }))
     on('tool.call', { tool: 'Bash' }, () => ({ result: 'Error: 2 requirements fail', isError: true }))
+    on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'agent-1' }))
+    on('turn.start', (_, e) => ({ turnId: e.turnId }))
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -520,9 +523,15 @@ describe('opsx-board', () => {
     await clock.advance(300)
     const rail = async () => (await ui.find({ type: 'Text', text: /Plan .* Archive/ }))?.text
     const why = async () => (await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text
+    const endTurn = (turnId: string, reason: 'answer' | 'aborted' = 'answer', agentId?: string) =>
+      $.turn.complete({ answer: '', durationMs: 1, isAborted: reason === 'aborted', turnId, agentId, reason })
 
     // Every artifact is written, and no apply has started: the person still reviews them.
+    // While the turn of the design command runs, Design is in progress, and Next waits.
     await $.command.run(typed('designer', 'update export-dialog'))
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-d')
     await clock.advance(300)
     expect(await rail()).toContain('▶  Design ›  ▶  Propose  › ○  Apply')
     expect((await ui.find({ key: 'design:export-dialog' }))?.text).toContain('approved 2026-10-11 · in review')
@@ -545,17 +554,35 @@ describe('opsx-board', () => {
     expect(await rail()).toContain('✔  Propose ›  ▶  Apply  ›')
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(state.statuses.at(-1)).toBe('opsx demo-change · Apply 0/9')
+    await $.agent.spawn(spawn('general-purpose', 'Implement group 2', 'Implement task group 2.'))
 
-    // An interrupt stops the apply run: Next offers to apply again.
-    await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't-a', reason: 'aborted' })
+    // An interrupt stops the apply run, but its agent still works: Next waits for the agent.
+    await endTurn('t-a', 'aborted')
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    // Once the agent ends too, Next offers to apply again.
+    await endTurn('t-g', 'answer', 'agent-1')
     await clock.advance(300)
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:apply demo-change')
     expect(await why()).toContain('the apply run stopped')
 
-    // The strict validation at the start of the next run refuses the change: the review goes on.
+    // The next main turn, such as the person's next prompt, goes on with the run: no hint,
+    // also after that turn ends.
+    await $.turn.start({ text: 'Go on with group 2.', turnId: 't-b' })
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-b')
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+
+    // The strict validation at the start of the next run refuses the change: the review goes on,
+    // and Next shows once the turn of the command ends.
     await clock.advance(6000)
     await $.command.run(typed('opsx:apply', 'demo-change'))
     await $.tool.call({ tool: 'Bash', command: 'openspec validate demo-change --strict' })
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-v')
     await clock.advance(300)
     expect(await rail()).toContain('✔  Design ›  ▶  Propose  › ○  Apply')
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:apply demo-change')
@@ -567,9 +594,11 @@ describe('opsx-board', () => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     world(on, { ...DEMO_FILES, [`${CHANGE}/tasks.md`]: TASKS_MD.replace(/- \[ \]/g, '- [x]') })
     on('command.run', () => ({ text: '' }))
+    on('turn.complete', () => ({ text: '' }))
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     await $.command.run(typed('opsx:apply', 'demo-change'))
+    await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't-a', reason: 'answer' })
     await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -1162,6 +1191,8 @@ describe('opsx-board with GitHub issues', () => {
     const state = world(on, GH_FILES, '34-csv-export')
     state.status = { 'gh-change': GH_STATUS }
     state.isGhMissing = true
+    on('command.run', () => ({ text: '' }))
+    on('turn.complete', () => ({ text: '' }))
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -1175,6 +1206,15 @@ describe('opsx-board with GitHub issues', () => {
     expect(await ui.find({ key: 'pr' })).toBeUndefined()
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify gh-change')
     expect(state.runs.filter(run => run.startsWith('gh ') && run !== 'gh --version')).toEqual([])
+
+    // While verify runs, Next does not offer it; it offers it again once the turn ends without a verdict.
+    await $.command.run(typed('opsx:verify', 'gh-change'))
+    await clock.advance(300)
+    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toContain('▶  Verify')
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await $.turn.complete({ answer: 'I could not finish.', durationMs: 1, isAborted: false, turnId: 't-v', reason: 'answer' })
+    await clock.advance(300)
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify gh-change')
     await ui.unmount()
   })
 

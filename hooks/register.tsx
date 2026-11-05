@@ -727,8 +727,12 @@ async function noteAgentEnd($: Engine, agentId: string, turn: TurnEnd): Promise<
 async function noteMainTurn($: Engine, turn: TurnEnd): Promise<void> {
   await addMainUsage($, unseenUsage(turn))
   const now = await $.clock.now()
+  // The turn that ran the last workflow command is over, and with it that command's run.
+  await update($, liveAtom, current =>
+    current.command === undefined || current.command.endedAt !== undefined ? current : { ...current, command: { ...current.command, endedAt: now } },
+  )
   if (turn.reason !== 'answer') {
-    // An interrupt, an error, or a refusal ends an apply run.
+    // An interrupt, an error, or a refusal stops an apply run, until the next main turn.
     await update($, liveAtom, current => ({ ...current, stoppedAt: now }))
   }
   const live = await read($, liveAtom)
@@ -1066,6 +1070,16 @@ export const register: Register = (on, options) => {
     }
 
     return result
+  })
+
+  // A main turn after an interrupt goes on with the apply run: the person's next prompt, or a
+  // background agent's notification, resumes it.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined && (await read($, liveAtom)).stoppedAt !== undefined) {
+      await update($, liveAtom, live => ({ ...live, stoppedAt: undefined }))
+    }
+
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {

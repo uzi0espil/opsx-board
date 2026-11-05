@@ -7,8 +7,19 @@ import { changeFromArgs, countDone, formatTokens, phaseOfCommand } from './parse
 
 export type StageKey = 'plan' | 'explore' | 'design' | 'propose' | 'apply' | 'verify' | 'pr' | 'archive'
 export type StageState = 'done' | 'active' | 'pending' | 'blocked' | 'na'
-/** `isInReview`: the work of the stage is written, but the next step has not started. */
-export type Stage = { key: StageKey; label: string; state: StageState; note?: string; isOptional: boolean; isInReview?: boolean }
+/**
+ * `isInReview`: the work of the stage is written, but the next step has not started.
+ * `isRunning`: the work of the stage runs now, so Next offers nothing until it stops.
+ */
+export type Stage = {
+  key: StageKey
+  label: string
+  state: StageState
+  note?: string
+  isOptional: boolean
+  isInReview?: boolean
+  isRunning?: boolean
+}
 
 export type GroupState = 'done' | 'running' | 'paused' | 'partial' | 'pending'
 export type GroupView = {
@@ -64,6 +75,16 @@ const isCommandFor = (live: Live, change: string | undefined): boolean => {
   const named = live.command?.change ?? (live.command === undefined ? undefined : changeFromArgs(live.command.args))
 
   return named === undefined || named === change
+}
+
+/** The main turn that runs the last workflow command has not ended. */
+const isCommandTurn = (live: Live): boolean => live.command !== undefined && live.command.endedAt === undefined
+
+/** Every task is done or left `[~]` or `[-]`: a task left open does not hold the change back, as the repository keeps owner steps open. */
+const isTasksSettled = (groups: readonly TaskGroup[]): boolean => {
+  const tasks = groups.flatMap(group => group.tasks)
+
+  return tasks.length > 0 && tasks.every(task => task.mark !== ' ')
 }
 
 /** The change has apply work: a checked task, or a commit of the apply run. */
@@ -167,6 +188,9 @@ export const stagesOf = (
   // Propose ends when Apply starts. Until then, the person reviews the artifacts and they can still change.
   // A pull request of the branch is no sign: the branch can hold one before the change applies.
   const commandPhase = live.command === undefined ? undefined : phaseOfCommand(live.command.name, hints)
+  // The work of a stage runs now: the main turn of its command, or an agent of its phase.
+  const isAgentRunning = (...phases: Phase[]) => agents.some(agent => phases.includes(agent.phase) && isRunning(agent))
+  const isCommandRunning = (phase: Phase) => isCommandTurn(live) && commandPhase === phase && isCommandFor(live, snap?.change)
   const isApplyStarted =
     isArchived ||
     (snap !== null && hasApplyWork(snap)) ||
@@ -183,6 +207,7 @@ export const stagesOf = (
           isOptional: true,
           state: pmRunning ? 'active' : snap !== null && (snap.planning.length > 0 || snap.planningNone !== undefined) ? 'done' : 'na',
           note: snap?.planning.map(item => item.id).join(', ') || snap?.planningNone,
+          isRunning: pmRunning || isAgentRunning('plan'),
         }
 
   const proposeState: StageState =
@@ -203,8 +228,13 @@ export const stagesOf = (
     state: proposeState,
     note: verdictNote === '' ? undefined : verdictNote,
     isInReview: proposeState === 'active' && snap?.isPlanningComplete === true,
+    isRunning: isCommandRunning('propose') || isAgentRunning('propose'),
   }
 
+  // The apply run goes on to the pull request, and is over once the tasks are settled and
+  // the pull request is open. Without gh there is no PR stage: the tasks alone decide.
+  const hasPr = snap?.pr !== undefined
+  const isApplyOpen = !isTasksSettled(groups) || (snap?.isGhMissing !== true && !hasPr && !isArchived)
   const applyRunning =
     isApplyRun(live, snap) ||
     agents.some(agent => agent.phase === 'apply' && isRunning(agent)) ||
@@ -224,10 +254,12 @@ export const stagesOf = (
               ? 'active'
               : 'pending',
     note: total > 0 ? `${done}/${total}` : undefined,
+    isRunning:
+      snap?.isPlanningComplete === true &&
+      ((isApplyRun(live, snap) && isApplyOpen) || isCommandRunning('apply') || isAgentRunning('apply')),
   }
 
   // Verify: `/opsx:verify`, or the review agent of the hints, under the label of the hints.
-  const hasPr = snap?.pr !== undefined
   const verify: Stage = {
     key: 'verify',
     label: hints?.verifyLabel ?? 'Verify',
@@ -243,6 +275,7 @@ export const stagesOf = (
           ? 'done'
           : 'pending',
     note: live.reviewCounts !== undefined ? findingsNote(live.reviewCounts) : live.verifyVerdict,
+    isRunning: reviewRunning || isCommandRunning('verify') || isAgentRunning('verify', 'review'),
   }
 
   // Without gh the board cannot see a pull request, so it shows no PR stage.
@@ -263,13 +296,23 @@ export const stagesOf = (
     isOptional: false,
     state: isArchived ? 'done' : recentCommand === 'opsx:archive' ? 'active' : 'pending',
     note: snap?.archivedAs?.slice(0, 10),
+    isRunning: isCommandRunning('archive') || isAgentRunning('archive'),
   }
 
   // Design mode keeps an empty change name in its snapshot: no change is bound.
   const change = snap === null || snap.change === '' ? undefined : snap.change
 
-  const explore = exploreStage(live, change, seenPhases)
-  const design = hints?.design === undefined ? undefined : designStage(designs, live, snap?.createdAt, hints)
+  // Explore and Design are stances that last until the next command: they run only while
+  // the turn of their command does.
+  const exploring = exploreStage(live, change, seenPhases)
+  const explore: Stage = { ...exploring, isRunning: (exploring.state === 'active' && isCommandTurn(live)) || isAgentRunning('explore') }
+  const design: Stage | undefined =
+    hints?.design === undefined
+      ? undefined
+      : {
+          ...designStage(designs, live, snap?.createdAt, hints),
+          isRunning: (isDesigning(live, hints) && isCommandTurn(live)) || isAgentRunning('design'),
+        }
   const before = hints?.plan?.isBeforeExplore === true ? [plan, explore] : [explore, plan]
 
   return [...before, design, propose, apply, verify, pr, archive].filter((stage): stage is Stage => stage !== undefined)
@@ -359,6 +402,10 @@ const designCommand = (hints: BoardHints | null, view: DesignView | undefined): 
 export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: Live, hints: BoardHints | null = null): NextStep | undefined => {
   const byKey = (key: StageKey) => stages.find(stage => stage.key === key)
   const design = byKey('design')
+  // A stage in progress needs no hint: Next shows once its work stops.
+  if (stages.some(stage => stage.isRunning === true)) {
+    return undefined
+  }
   // No change yet: design mode keeps an empty change name in its snapshot.
   if (snap === null || snap.change === '') {
     const designs = snap?.designs ?? []
@@ -408,16 +455,9 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
   if (byKey('propose')?.state === 'active') {
     return { text: `/opsx:apply ${change}`, why: `all artifacts are written. Apply when their review is over${pending}` }
   }
-  // A task left `[~]` or `[-]` does not hold the change back: the repository keeps owner steps open.
-  const tasks = snap.groups.flatMap(group => group.tasks)
-  const isTasksSettled = tasks.length > 0 && tasks.every(task => task.mark !== ' ')
   // Without a PR stage (no gh), the change goes from its tasks to verify, then to the archive.
   const prStage = byKey('pr')
-  if (!isTasksSettled || (prStage !== undefined && prStage.state !== 'done')) {
-    // The apply run of this session goes on to the pull request: it needs no hint.
-    if (isApplyRun(live, snap)) {
-      return undefined
-    }
+  if (!isTasksSettled(snap.groups) || (prStage !== undefined && prStage.state !== 'done')) {
     const isStopped = live.command?.name === 'opsx:apply' && (live.stoppedAt ?? 0) >= live.command.at
     const why = isStopped ? 'the apply run stopped. Apply again to go on' : prStage === undefined ? 'tasks remain' : 'tasks, review, or the pull request remain'
 
@@ -426,7 +466,7 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
   if (prStage === undefined && byKey('verify')?.state !== 'done') {
     return { text: `/opsx:verify ${change}`, why: `the tasks are done. Verify the change before the archive${pending}` }
   }
-  const partial = tasks.filter(task => task.mark === '~').length
+  const partial = snap.groups.flatMap(group => group.tasks).filter(task => task.mark === '~').length
   const ready = prStage === undefined ? 'the change is verified' : 'the pull request is open'
 
   return {

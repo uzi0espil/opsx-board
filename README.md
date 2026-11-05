@@ -65,7 +65,7 @@ Every row acts on a click:
 | Agent | Opens its session |
 | Review (Verify), verify | Shows the last report of the review agent, else of `/opsx:verify`, in the reader |
 | PR | Opens the pull request in the browser (an archived change finds the PR that merged it) |
-| Next | Fills the prompt with the next command. It never runs the command. The pane hides it during an apply run, see [Apply run](#apply-run) |
+| Next | Fills the prompt with the next command. It never runs the command. The pane hides it while a stage is in progress, see [Next](#next) |
 
 The reader is a view of the board pane. A document replaces the board in the same pane, and
 `← Board` brings the board back, at the row that opened the document. The hotkey `b` presses
@@ -109,14 +109,28 @@ active change in its folder, else the change its branch names, else the one pick
 ## Apply run
 
 An apply run starts with `/opsx:apply` for the bound change. It lasts while that command is the
-last workflow command of the session. It ends early in two cases:
+last workflow command of the session. It stops in two cases:
 
-- The strict validation at the start of the run refuses the change.
-- A main turn ends by an interrupt, an error, or a refusal.
+- The strict validation at the start of the run refuses the change. The run stays stopped.
+- A main turn ends by an interrupt, an error, or a refusal. The next main turn resumes the run,
+  such as the person's next prompt or the notification of a background agent.
 
 During an apply run, the pane hides Next until no task is `[ ]` and the pull request exists.
 Then Next offers `/opsx:archive`. A task left `[~]` for the owner does not hold the archive back.
-After an apply run ends early, Next offers `/opsx:apply` again.
+While an apply run is stopped and none of its agents runs, Next offers `/opsx:apply` again.
+
+## Next
+
+Next offers nothing while a stage is in progress. A stage is in progress while one of these
+runs:
+
+- The main turn of its command, such as `/opsx:propose`, `/opsx:verify`, or the design command.
+- An apply run, for the Apply stage.
+- An agent that the session started in that stage. An interrupt does not stop a background agent.
+- The review agent of the hints, for Verify, or the agent of the Plan stage.
+
+Explore, Design, and Propose `in review` are active, but no work runs in them after the turn of
+their command. Then Next offers the step that ends them.
 
 Without `gh`, the board cannot see a pull request. It shows no PR stage, and when no task is
 `[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
