@@ -223,12 +223,15 @@ export type DesignRun = { view: string; mode: 'new' | 'update'; at: number }
 export type ExploreRun = { topic: string; at: number; change?: string }
 
 export type Live = {
-  /** `change`: the change the session was bound to after the command. Optional for older state. */
-  command?: { name: string; args: string; at: number; change?: string }
+  /**
+   * `change`: the change the session was bound to after the command. Optional for older state.
+   * `endedAt`: when the main turn that ran the command ended; absent while it runs.
+   */
+  command?: { name: string; args: string; at: number; change?: string; endedAt?: number }
   isValidateOk?: boolean
   /** When the last `openspec validate --strict` ran. */
   validateAt?: number
-  /** When the last main turn ended by an interrupt, an error, or a refusal. */
+  /** When a main turn ended by an interrupt, an error, or a refusal. The next main turn clears it. */
   stoppedAt?: number
   reviewCounts?: Record<string, number>
   reviewAt?: number
