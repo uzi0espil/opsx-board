@@ -148,7 +148,7 @@ describe('parse', () => {
     expect(text).toContain('## ADR Compliance')
 
     const narrow = '| a | b |\n|---|---|\n| 1 | 2 |\n'
-    expect(reflowTables(narrow, 80)).toEqual({ text: narrow.replace(/\n$/, '\n'), reflowed: 0 })
+    expect(reflowTables(narrow, 80)).toEqual({ text: narrow, reflowed: 0 })
     const fenced = '```\n| a | b |\n|---|---|\n```\n'
     expect(reflowTables(fenced, 3).reflowed).toBe(0)
     expect(tableCells('| `a\\|b` | c |')).toEqual(['`a|b`', 'c'])
