@@ -188,6 +188,34 @@ const hoverCard = (Box: Elements['Box'], Text: Elements['Text'], text: string, w
   )
 }
 
+/**
+ * `← Main session` (hotkey `m`), while the main view shows an agent's session: a press shows
+ * the main session again. The engine draws the pane again for each switch of the view, by
+ * this button, an agent cell, or Claude Code's own list of agents, so the button shows only
+ * while an agent is in view. `$.ui.view` is the press's first call: the engine switches the
+ * view only while the call answers the person's press.
+ */
+function mainSessionButton($: Engine, e: RenderInput<'Pane'>, Button: Elements['Button']) {
+  if (e.props.view?.agentId === undefined) {
+    return null
+  }
+
+  return (
+    <Button
+      key="main-session"
+      hotkey="m"
+      onPress={async () => {
+        const viewed = await $.ui.view({})
+        if (viewed.deny !== undefined) {
+          $.ui.toast(`Cannot show the main session: ${viewed.deny}`)
+        }
+      }}
+    >
+      ← Main session
+    </Button>
+  )
+}
+
 export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, actions: PaneActions) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const { binding, snap, live, agents, main, reports, others, figures, folded, expanded, hints, now } = data
@@ -434,6 +462,8 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
             text: `${STAGE_GLYPH[current.state]}  ${stageText(current)}`,
             color: STAGE_COLOR[current.state] ?? 'text',
           }
+  const mainButton = mainSessionButton($, e, Button)
+  const viewedAgent = agents.find(agent => agent.id === e.props.view?.agentId)
   const headerCard = (
     <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -446,10 +476,23 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           </Text>
         )}
       </Box>
-      {meta === '' ? null : (
-        <Text dimColor wrap="truncate-end">
-          {meta}
-        </Text>
+      {mainButton === null ? (
+        meta === '' ? null : (
+          <Text dimColor wrap="truncate-end">
+            {meta}
+          </Text>
+        )
+      ) : (
+        // Under the stage chip: which agent is in view, and the way back to the main session.
+        <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          <Text dimColor wrap="truncate-end">
+            {meta}
+          </Text>
+          <Box flexDirection="row" gap={1}>
+            {viewedAgent === undefined ? null : <Text dimColor>{`viewing ${viewedAgent.type}`}</Text>}
+            {mainButton}
+          </Box>
+        </Box>
       )}
       <Text dimColor wrap="truncate-end">
         {figuresLine}
@@ -836,6 +879,7 @@ export function renderReader($: Engine, e: RenderInput<'Pane'>, doc: ReaderDoc, 
                 Open in the browser ↗
               </Button>
             )}
+            {mainSessionButton($, e, Button)}
             <Button key="back" hotkey="b" onPress={() => actions.back()}>
               ← Board
             </Button>
