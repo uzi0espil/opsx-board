@@ -14,7 +14,7 @@ with any OpenSpec schema.
 [Install](#install) · [Use](#use) · [The board in detail](docs/board.md) ·
 [board.yaml](docs/board-yaml.md) · [Contributing](CONTRIBUTING.md)
 
-<!-- A screenshot or GIF of the pane goes here: docs/images/board.png -->
+![The board beside a Claude Code session: two agents run task groups 1 and 2 of a change at the same time, each with its tasks, tokens, and time](docs/images/board.gif)
 
 ## Why use it?
 
