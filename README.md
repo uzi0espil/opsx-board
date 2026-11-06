@@ -1,21 +1,63 @@
 # opsx-board
 
+**See where your OpenSpec change stands, live, in a pane beside the Claude Code chat.**
+
+opsx-board follows the [OpenSpec](https://github.com/Fission-AI/OpenSpec) workflow of your
+session while you work: the stage your change is in, the task groups that are done, the agent
+working on each group, the tokens each step costs, and the command that comes next. It works
+with any OpenSpec schema.
+
 [![CI](https://github.com/uzi0espil/opsx-board/actions/workflows/ci.yml/badge.svg)](https://github.com/uzi0espil/opsx-board/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fuzi0espil%2Fopsx-board%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version)](https://github.com/uzi0espil/opsx-board/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin that shows, in a pane beside the chat, where the OpenSpec change of the
-session stands: Explore, Propose, Apply, Verify, PR, and Archive. The Propose section lists the
-artifacts of the change's schema in their `requires` order. The Apply section lists each task
-group with its progress, the agent that runs it, its tokens, and its commit.
+[Install](#install) · [Use](#use) · [The board in detail](docs/board.md) ·
+[board.yaml](docs/board-yaml.md) · [Contributing](CONTRIBUTING.md)
 
-The board reads the schema of each change from the `openspec` CLI, so it works with any schema.
-A `board.yaml` beside the schema adds what OpenSpec does not know, such as a Plan stage of work
-items and a Design stage. See [Schemas and board.yaml](#schemas-and-boardyaml).
+![The board beside a Claude Code session: two agents run task groups 1 and 2 of a change at the same time, each with its tasks, tokens, and time](docs/images/board.gif)
 
-> **Work in progress.** Work items come from files of the repository or from GitHub issues. A
-> Jira provider comes next. The plugin is not affiliated with Anthropic or the OpenSpec project.
+## Why use it?
+
+An OpenSpec change runs over many commands, agents, and sessions. The chat shows the last turn,
+not where the change stands. The board keeps that in view:
+
+- **The whole lifecycle at a glance.** Explore, Propose, Apply, Verify, PR, and Archive, with the
+  stage in progress marked.
+- **Live apply progress.** A progress bar of the tasks, and each task group with the agent that
+  runs it, its tokens, and its commit.
+- **The next step, ready to send.** Next fills the prompt with the next `/opsx:` command. You
+  send it; the board never runs it.
+- **Read without leaving the terminal.** A click opens the proposal, the tasks, a spec, or an
+  issue in the pane.
+- **What a change costs.** Tokens per stage, added up over every session of the change.
+- **Your schema, your stages.** The board takes the stages from your OpenSpec schema. A
+  `board.yaml` adds a Plan stage of backlog items or GitHub issues, and a Design stage.
+
+## How it works
+
+```mermaid
+flowchart LR
+    explore[Explore] --> plan[Plan] --> design[Design] --> propose[Propose]
+    propose --> apply[Apply] --> verify[Verify] --> pr[PR] --> archive[Archive]
+    classDef extra stroke-dasharray: 5 5
+    class plan,design extra
+```
+
+The dashed stages come from a [`board.yaml`](#add-stages-with-boardyaml). The PR stage needs
+`gh`.
+
+The board watches; it does not steer. It reads the `openspec` CLI, the files of the change, git,
+`gh`, and the events of your session: commands, agents, and tokens. It redraws as they change,
+and it changes no file of the workflow.
+
+Each session follows its own change: the argument of its last `/opsx:` command, else the only
+active change in its folder, else the change its branch names, else the one you pick in the
+pane. It follows the session into a worktree and out of it.
 
 ## Install
+
+You need Claude Code and the `openspec` CLI on the `PATH`. `gh` is optional: without it, the board
+shows no PR stage and no GitHub issue state.
 
 In Claude Code 2.1.275 or later:
 
@@ -30,240 +72,31 @@ In an earlier version, add the marketplace first:
 /plugin install opsx-board@opsx-board
 ```
 
-The board needs the `openspec` CLI on the `PATH`. `gh` is optional: without it, the board shows
-no PR stage and no GitHub issue state.
-
-## The board
-
-The examples in the rest of this README use the `board.yaml` of
-[Schemas and board.yaml](#schemas-and-boardyaml): a Plan stage of backlog items (`WI-12`), a
-Design stage of a `/designer` command, and a review agent, labeled Review.
-
-Explore and Design can run before a change exists. Then the pane shows the stage rail, the
-explored topics with the tokens spent on them, and the design views. When `/opsx:propose <name>`
-runs later in the same session, the pane binds the change and moves the explored topics and the
-tokens into it. The session explores while `/opsx:explore` is its last workflow command. An
-explore argument binds the pane only when it names an active change. An archived change binds
-only through `/opsx-board <change>`.
-
-A session explores in the context of the change that it is bound to. In a folder with exactly
-one active change, the session binds that change by itself, so its explore tokens count for that
-change.
-
-The board reads the folder that the session works in, and it follows the session into a worktree
-and out of it. A session can leave a worktree that still holds the bound change, for a folder
-without that change. Then the board keeps reading the change in the worktree. When the session
-leaves a worktree that it removed, the board reads the change in the new folder, also from the
-archive there.
-
-Propose and Design stay active until the next step starts, because the person reviews their
-output and asks for changes. When every artifact exists, Propose shows `in review` until one of
-these signals shows that Apply started:
-
-- `/opsx:apply`, `/opsx:verify`, `/opsx:sync`, or `/opsx:archive` runs for the change.
-- A task gets its check.
-- A commit of the apply run lands, such as the artifacts commit or a `Task N` commit.
-- The change moves to the archive.
-
-When the strict validation at the start of `/opsx:apply` refuses the change, the review goes on.
-A pull request of the branch is not a signal. A design view shows `in review` while the design
-command (`/designer`) is the last workflow command of the session, also after its
-approval. The tokens of the review count for the stage in review.
-
-Every row acts on a click:
-
-| Row | Click |
-|-----|-------|
-| Section header | Folds or unfolds the section |
-| Planning item (`WI-12`) | Shows its block of the file that holds it in the reader |
-| Design view | Opens its file (`artifact.html`) in the browser; `decisions` opens its decision log in the reader |
-| Artifact (proposal, arch-review, design, tasks) | Opens the file in the reader |
-| `specs` | Lists the spec files; each opens in the reader |
-| Task group | Folds or unfolds its tasks |
-| Agent cell of a task group (`general-purpose 44k 2m`) | Opens the session of its agent |
-| Task (clipped) | Unfolds its whole text in place; a second click folds it. A hover shows it in a floating card |
-| Agent | Opens its session |
-| Review (Verify), verify | Shows the last report of the review agent, else of `/opsx:verify`, in the reader |
-| PR | Opens the pull request in the browser (an archived change finds the PR that merged it) |
-| Next | Fills the prompt with the next command. It never runs the command. The pane hides it while a stage is in progress, see [Next](#next) |
-
-The reader is a view of the board pane. A document replaces the board in the same pane, and
-`← Board` brings the board back, at the row that opened the document. The hotkey `b` presses
-`← Board` while the pane holds the keyboard. Esc does not close the reader, because the engine
-never passes Esc to a mod. Esc gives the keyboard back to the prompt. When the pane closes, or
-when `/opsx-board` runs, the pane shows the board again.
-
-The reader is not a second pane, for two reasons:
-
-- The engine shows a new pane in front only while no pane holds the keyboard. A reader tab
-  behind the board therefore stayed behind.
-- The engine treats a pane that opens after a click as unrequested. An unrequested pane waits
-  undrawn in a terminal narrower than 144 columns.
-
-A table wider than the pane is shown as a list, one item per row. The reader says so, and the
-app of the file shows the original. The reader reads its file at each refresh, so an open
-`tasks.md` shows the checks as they land. `Open in its app` opens the file with the default app
-of the system. The browser and the default app open through the system opener:
-`rundll32 url.dll,FileProtocolHandler` on Windows, `open` on macOS, and `xdg-open` elsewhere.
-The opener runs a program or a script as it opens it, so the board opens only URLs and
-document files (`.html`, `.md`, `.pdf`, images, and a few more). The schema and its hints name
-the files, and they come with the repository.
-
-The plugin observes the workflow. It reads the `openspec` CLI JSON, the schema and its hints,
-the change files, the files the hints name, git, and `gh`, and the session's own agent and token
-events. It changes no workflow file.
-
 ## Use
 
-- `/opsx-board`: open the pane.
-- `/opsx-board <change>`: pin the pane to a change, also an archived one.
-- `/opsx-board auto`: let the session choose the change again.
-- `/opsx-board close`: close the pane.
+Run any `/opsx:` command, or the design command of your `board.yaml`. The pane opens by itself
+when the terminal is wide enough. When the pane is closed, a status line under the prompt shows
+the stage.
 
-The pane opens by itself on any `/opsx:*` command and on the design command of the hints, when
-the terminal is wide enough. A status line under the prompt shows the stage when the pane is closed.
+| Command | What it does |
+| --- | --- |
+| `/opsx-board` | Opens the pane |
+| `/opsx-board <change>` | Pins the pane to a change, also an archived one |
+| `/opsx-board auto` | Lets the session choose the change again |
+| `/opsx-board close` | Closes the pane |
 
-Each session follows its own change: the argument of its last `/opsx:*` command, else the only
-active change in its folder, else the change its branch names, else the one picked in the pane.
+Every row acts on a click: a section folds, an artifact opens in the pane, an agent opens its
+session, the PR opens in the browser, and Next fills the prompt. See
+[Clicks](docs/board.md#clicks).
 
-## Apply run
+During `/opsx:apply`, the board asks the agents to report the task they work on, so the pane
+marks the exact task in progress. Turn this off with **Progress report tool** in `/config`.
 
-An apply run starts with `/opsx:apply` for the bound change. It lasts while that command is the
-last workflow command of the session. It stops in two cases:
+## Add stages with board.yaml
 
-- The strict validation at the start of the run refuses the change. The run stays stopped.
-- A main turn ends by an interrupt, an error, or a refusal. The next main turn resumes the run,
-  such as the person's next prompt or the notification of a background agent.
-
-During an apply run, the pane hides Next until no task is `[ ]` and the pull request exists.
-Then Next offers `/opsx:archive`. A task left `[~]` for the owner does not hold the archive back.
-While an apply run is stopped and none of its agents runs, Next offers `/opsx:apply` again.
-
-## Next
-
-Next offers nothing while a stage is in progress. A stage is in progress while one of these
-runs:
-
-- The main turn of its command, such as `/opsx:propose`, `/opsx:verify`, or the design command.
-- An apply run, for the Apply stage.
-- An agent that the session started in that stage. An interrupt does not stop a background agent.
-- The review agent of the hints, for Verify, or the agent of the Plan stage.
-
-Explore, Design, and Propose `in review` are active, but no work runs in them after the turn of
-their command. Then Next offers the step that ends them.
-
-Without `gh`, the board cannot see a pull request. It shows no PR stage, and when no task is
-`[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
-
-## Progress report tool
-
-During an apply run of a change with open tasks, the board asks the main agent and each new
-subagent to call `mcp__opsx-board__progress` before and after each task. The pane then marks
-the exact task in progress. The agents `Explore`, `Plan`, `claude-code-guide`, and
-`statusline-setup` do not get the request, and neither do the review agent, the plan agent, and
-the agents in `apply.skipReportAgents` of the hints. The setting `reportTool` in `/config` stops these requests. The pane then
-infers the group from the agent's prompt.
-
-The request to the main agent rides on `/opsx:apply` as hidden context. A managed plugin can skip
-the `skill.prompt` hooks of other plugins, so the plugin does not use that hook.
-
-Every change name passes a kebab-case check before it reaches a command line or a ledger path.
-On Windows the `openspec` CLI runs through `cmd /c`, which reads `&` and `|` as its own syntax.
-
-## Tokens
-
-Tokens count per model request, so a running agent's total grows while it works. Totals for a
-change persist across sessions in `~/.claude/opsx-board/ledgers/<change>/<session>.json`, one
-file per session.
-
-## Schemas and board.yaml
-
-The stages come from OpenSpec:
-
-- **Propose** lists the artifacts of the change's schema, each after the artifacts it
-  `requires`. Artifacts of one level can be written side by side. An active change gets them
-  from `openspec status --json`. An archived change gets them from the `schema.yaml` that its
-  `.openspec.yaml` names, which `openspec schema which <name>` finds.
-- **Explore**, **Apply**, **Verify**, and **Archive** follow the `/opsx:*` commands, the task
-  checks, and the archive folder. The tasks come from the files that `apply.tracks` of the
-  schema names, a path or a glob in the change folder. A schema without `apply.tracks` tracks no
-  tasks, as the CLI does.
-- **PR** comes from `gh`. Without `gh`, the board shows no PR stage. An archived change finds
-  the pull request that its squash commit names. In a checkout of the change's own branch, it
-  finds the pull request of the branch whose commits hold the archive commit. While that pull
-  request is open, the board reads it again once a minute, until it is merged or closed.
-
-A `board.yaml` adds what OpenSpec does not know. The board reads the first one it finds:
-
-1. `~/.claude/opsx-board/schemas/<schema>/board.yaml`, the person's own copy.
-2. `board.yaml` in the folder of the schema, for example
-   `openspec/schemas/<schema>/board.yaml`. It passes `openspec schema validate`.
-
-Without one, the board shows the OpenSpec stages only. A problem in the file shows as a warning
-line in the pane. An example for a schema with an `arch-review` artifact:
-
-```yaml
-version: 1
-
-stages:
-  - { id: plan, label: Plan, collects: work-item, before: explore, section: Planning Items, agent: planner }
-  - id: design
-    label: Design
-    collects: design
-    section: Visual Design
-    command: designer
-    next: { new: '/designer {id}', update: '/designer update {id}' }
-
-refs:
-  - { kind: work-item, provider: file, pattern: 'WI-\d+', file: docs/backlog.md }
-  - { kind: work-item, provider: file, pattern: 'BUG-\d+', file: docs/bugs.md, history: docs/bugs-closed.md }
-  - kind: design
-    provider: file
-    pattern: 'designs/([A-Za-z0-9][\w-]*)/'
-    dir: designs/{id}
-    open: artifact.html
-    screenshots: screenshots
-    decisions: decisions.md
-    needs: 'needs-design|needs an update'
-
-artifacts:
-  arch-review:
-    verdict:
-      values: [PASS-WITH-NOTES, PASS, REQUIRES-ADR, BLOCK]
-      block: [BLOCK]
-      warn: [REQUIRES-ADR]
-      next: /opsx:update {change}
-      notes:
-        - { pattern: 'ADR created.*?docs/adr/(\d{4})-', text: 'ADR-{1}' }
-
-commits:
-  artifacts: 'add openspec change artifacts'
-  task: '^\w+\({change}\): Task (\d+)'
-
-verify:
-  label: Review
-  agent: spec-reviewer
-  findings: '^\s*- \[[ xX]\]\s+(MISSING|DIVERGED|EXTRA)\b'
-
-apply:
-  skipReportAgents: [architect]
-```
-
-Its parts:
-
-| Key | What it adds |
-|-----|--------------|
-| `stages` | A stage that `collects: work-item` (Plan) and a stage that `collects: design` (Design). Each reads one `section` of the proposal. `before: explore` puts a stage before Explore. A design stage names its `command` and the commands that Next offers. |
-| `refs` | How a reference resolves. A `work-item` ref maps an ID `pattern` to the `file` that holds the items, and their `history`. A `design` ref maps a path `pattern` to a design folder (`dir` with `{id}`), the file a click opens, its screenshots, and its decision log. |
-| `artifacts.<id>.verdict` | The verdict values of a review artifact, which values `block` or `warn`, the command that revises a blocked change, and notes. |
-| `commits` | Commit subject patterns of the apply run: `artifacts`, `task` (group number in its first group), `reviewFix`, and `archive`. `{change}` stands for the change name. |
-| `verify` | The label of the Verify stage, the review agent, and the pattern of its finding lines. |
-| `apply.skipReportAgents` | More agents that never get the progress request. |
-
-### GitHub issues
-
-A `work-item` ref with `provider: github` takes the work items of a change from GitHub issues.
-This `board.yaml` works for any schema:
+Without a `board.yaml`, the board shows the stages of OpenSpec. A `board.yaml` adds what
+OpenSpec does not know. This one takes the work items of a change from GitHub issues, for any
+schema:
 
 ```yaml
 version: 1
@@ -275,60 +108,45 @@ refs:
   - { kind: work-item, provider: github, branch: '^(\d+)-' }
 ```
 
-The board finds the issues of a change in three places, and shows each issue once:
+Put it beside the schema, at `openspec/schemas/<schema>/board.yaml`, or keep your own copy at
+`~/.claude/opsx-board/schemas/<schema>/board.yaml`. A `board.yaml` can also add a Design stage,
+take work items from backlog files, and read the verdict of a review artifact. See
+[board.yaml](docs/board-yaml.md).
 
-1. The proposal section of the stage: each `#12`, `owner/name#12`, and issue URL on a list
-   line of it. A prose line names no issue, and a number after "PR" or "pull request" names a
-   pull request.
-2. The branch name: the first group of the `branch` pattern, such as `12` in `12-csv-export`.
-3. The pull request of the branch: the issues it closes. Set `pr: false` to leave them out.
+## What it touches
 
-`gh issue view` gives the title and the state of each issue: `[ ]` open, `[x]` closed as done,
-`[-]` closed as not planned. The board reads an issue again after two minutes, and it shows the
-first 12 issues of a change. A click on an issue shows its body in the reader, with a button
-that opens its page.
+- **Reads** the repository of the session, through the `openspec` CLI, git, and `gh`, and its own
+  folder, `~/.claude/opsx-board/`.
+- **Writes** only its token ledgers, under `~/.claude/opsx-board/`.
+- **Runs no workflow command.** Next fills the prompt; you decide to send it.
+- **Checks a `board.yaml` strictly**, because it comes with a repository: built-in providers
+  only, paths inside the repository, and short patterns. See [The check](docs/board-yaml.md#the-check).
 
-A bare `#12` names an issue of the home repository: `repo` of the ref (`owner/name`), else the
-repository of the pull request, else the one `gh` finds from the working directory. Without
-`gh`, the issues show `[?]` and a warning.
+[SECURITY.md](SECURITY.md) lists everything the plugin does in a session.
 
-### The check
+## Status
 
-A `board.yaml` comes with any repository, so the board checks it strictly:
+Work in progress. Work items come from files of the repository or from GitHub issues, and a Jira
+provider comes next. See the [releases](https://github.com/uzi0espil/opsx-board/releases) for
+what changed.
 
-- It names built-in providers only. Version 1 has the `file` and `github` providers. The
-  `github` provider runs `gh issue view` and reads the pull request that the PR stage reads.
-  The file chooses which issues count, never a command. A provider that calls a tool or a
-  command of the file's choice is not built in, and the board ignores a ref that names one.
-- A `repo` must be `owner/name`.
-- Every path stays inside the repository: no absolute path, no drive, and no `..`.
-- A design opens a document file only.
-- Next fills the prompt with one slash command and a short argument. It never runs it.
-- Each pattern must compile and have 300 characters or fewer. A pattern runs on the files of
-  the same repository, and a slow pattern can slow the board.
+opsx-board is not affiliated with Anthropic or the OpenSpec project.
 
-## Develop
+## Documentation
 
-```
-claude --plugin-dir <this folder>
-claude plugin validate <this folder>
-claude plugin test <this folder>
-```
+- [The board in detail](docs/board.md): stages, clicks, the reader, apply runs, Next, and tokens.
+- [board.yaml](docs/board-yaml.md): the stages, references, verdicts, and commit patterns it
+  adds, GitHub issues, and its checks.
+- [Contributing](CONTRIBUTING.md): set up, tests, pull request titles, and releases.
+- [Security](SECURITY.md): what the plugin does in a session, and how to report a vulnerability.
 
-To load the board in every session, add this folder to
-`CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`. The variable takes a
-list of folders, separated by `;` on Windows and `:` elsewhere. A change of the variable takes
-effect in the next session.
+## Help and feedback
 
-The tests use the `board.yaml` of a demo project. Other tests cover a plain `spec-driven`
-change, an archived change of a forked schema, GitHub issues with and without `gh`, tasks from
-`apply.tracks`, a session that leaves a worktree, and the `reportTool` setting.
-
-## Contribute
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability as [SECURITY.md](SECURITY.md)
-says, not in an issue.
+Use [GitHub Issues](https://github.com/uzi0espil/opsx-board/issues) for bugs and ideas. Report a
+vulnerability through
+[private vulnerability reporting](https://github.com/uzi0espil/opsx-board/security/advisories/new),
+not an issue.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
