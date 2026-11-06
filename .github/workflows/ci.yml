@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Each Monday, on the newest Claude Code: a release that breaks the plugin shows here first.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      DISABLE_AUTOUPDATER: '1'
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code
+      - run: claude --version
+      - name: Validate
+        run: claude plugin validate --strict .
+      - name: Test
+        run: claude plugin test .

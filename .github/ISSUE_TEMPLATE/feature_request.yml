@@ -1,0 +1,22 @@
+name: Feature request
+description: Something the board should show or do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What the board should show or do
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The step of your workflow it helps, and what you do today instead.
+    validations:
+      required: true
+  - type: input
+    id: schema
+    attributes:
+      label: Schema
+      description: The schema you use, if the request depends on it.

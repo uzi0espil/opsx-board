@@ -1,0 +1,65 @@
+name: Bug report
+description: The board shows something wrong, or misses something.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What the board showed, and what you expected it to show.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: The commands of the session, in order.
+      placeholder: |
+        1. /opsx:propose add-login
+        2. /opsx:apply add-login
+        3. Interrupt the turn
+    validations:
+      required: true
+  - type: textarea
+    id: pane
+    attributes:
+      label: The pane
+      description: A screenshot of the pane, or its text.
+  - type: input
+    id: schema
+    attributes:
+      label: Schema
+      description: The schema of the change, and whether it has a board.yaml.
+      placeholder: spec-driven, no board.yaml
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: The output of `claude --version`.
+    validations:
+      required: true
+  - type: input
+    id: openspec
+    attributes:
+      label: OpenSpec version
+      description: The output of `openspec --version`.
+    validations:
+      required: true
+  - type: input
+    id: gh
+    attributes:
+      label: gh version
+      description: The output of `gh --version`, or "not installed".
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - WSL
+    validations:
+      required: true
