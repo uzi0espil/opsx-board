@@ -21,7 +21,14 @@ claude plugin validate <your clone>
 claude plugin test <your clone>
 ```
 
-[Develop](README.md#develop) in the README has the details. The tests need no login.
+To load the board from your clone in every session, add the clone to
+`CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`. The variable takes a
+list of folders, separated by `;` on Windows and `:` elsewhere. A change of the variable takes
+effect in the next session.
+
+The tests need no login. They use the `board.yaml` of a demo project. Other tests cover a plain
+`spec-driven` change, an archived change of a forked schema, GitHub issues with and without
+`gh`, tasks from `apply.tracks`, a session that leaves a worktree, and the `reportTool` setting.
 
 CI runs both checks on Ubuntu and Windows for each pull request, and each week on the newest
 Claude Code.
