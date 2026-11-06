@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # The plugin has no package dependencies: only the actions of the workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

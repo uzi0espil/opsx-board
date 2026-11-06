@@ -1,5 +1,8 @@
 # opsx-board
 
+[![CI](https://github.com/uzi0espil/opsx-board/actions/workflows/ci.yml/badge.svg)](https://github.com/uzi0espil/opsx-board/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Claude Code plugin that shows, in a pane beside the chat, where the OpenSpec change of the
 session stands: Explore, Propose, Apply, Verify, PR, and Archive. The Propose section lists the
 artifacts of the change's schema in their `requires` order. The Apply section lists each task
@@ -9,9 +12,26 @@ The board reads the schema of each change from the `openspec` CLI, so it works w
 A `board.yaml` beside the schema adds what OpenSpec does not know, such as a Plan stage of work
 items and a Design stage. See [Schemas and board.yaml](#schemas-and-boardyaml).
 
-> **Work in progress.** The plugin is not in a marketplace yet. Work items come from files of the
-> repository or from GitHub issues. A Jira provider comes next. The plugin is not affiliated with
-> the OpenSpec project.
+> **Work in progress.** Work items come from files of the repository or from GitHub issues. A
+> Jira provider comes next. The plugin is not affiliated with Anthropic or the OpenSpec project.
+
+## Install
+
+In Claude Code 2.1.275 or later:
+
+```
+/plugin install opsx-board --marketplace uzi0espil/opsx-board
+```
+
+In an earlier version, add the marketplace first:
+
+```
+/plugin marketplace add uzi0espil/opsx-board
+/plugin install opsx-board@opsx-board
+```
+
+The board needs the `openspec` CLI on the `PATH`. `gh` is optional: without it, the board shows
+no PR stage and no GitHub issue state.
 
 ## The board
 
@@ -303,3 +323,12 @@ effect in the next session.
 The tests use the `board.yaml` of a demo project. Other tests cover a plain `spec-driven`
 change, an archived change of a forked schema, GitHub issues with and without `gh`, tasks from
 `apply.tracks`, a session that leaves a worktree, and the `reportTool` setting.
+
+## Contribute
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability as [SECURITY.md](SECURITY.md)
+says, not in an issue.
+
+## License
+
+[MIT](LICENSE).

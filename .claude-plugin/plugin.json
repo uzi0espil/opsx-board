@@ -2,6 +2,14 @@
   "name": "opsx-board",
   "version": "0.1.0",
   "description": "Live pane for the OpenSpec lifecycle of a change: stages, task groups, agents, and tokens.",
+  "author": {
+    "name": "Ousama Esbel",
+    "url": "https://github.com/uzi0espil"
+  },
+  "homepage": "https://github.com/uzi0espil/opsx-board",
+  "repository": "https://github.com/uzi0espil/opsx-board",
+  "license": "MIT",
+  "keywords": ["openspec", "spec-driven-development", "pane"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "reportTool": {
