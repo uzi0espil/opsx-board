@@ -86,8 +86,8 @@ the stage.
 | `/opsx-board close` | Closes the pane |
 
 Every row acts on a click: a section folds, an artifact opens in the pane, an agent opens its
-session, the PR opens in the browser, and Next fills the prompt. See
-[Clicks](docs/board.md#clicks).
+session (`← Main session` brings you back), the PR opens in the browser, and Next fills the
+prompt. See [Clicks](docs/board.md#clicks).
 
 During `/opsx:apply`, the board asks the agents to report the task they work on, so the pane
 marks the exact task in progress. Turn this off with **Progress report tool** in `/config`.

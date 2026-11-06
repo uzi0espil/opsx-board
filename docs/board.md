@@ -69,6 +69,7 @@ Every row acts on a click:
 | Agent cell of a task group (`general-purpose 44k 2m`) | Opens the session of its agent |
 | Task (clipped) | Unfolds its whole text in place; a second click folds it. A hover shows it in a floating card |
 | Agent | Opens its session |
+| `← Main session` | Shows the main session again. It appears under the stage chip, and in the reader, only while an agent's session is in view. The hotkey `m` presses it while the pane holds the keyboard |
 | Review (Verify), verify | Shows the last report of the review agent, else of `/opsx:verify`, in the reader |
 | PR | Opens the pull request in the browser (an archived change finds the PR that merged it) |
 | Next | Fills the prompt with the next command. It never runs the command. The pane hides it while a stage is in progress, see [Next](#next) |

@@ -412,6 +412,24 @@ describe('opsx-board', () => {
     expect(await ui.find({ key: 'task:2.2' })).toBeDefined()
     state.viewDeny = undefined
 
+    // While the agent's session is in view, the header names the agent and offers the way back.
+    expect(await ui.find({ key: 'main-session' })).toBeUndefined()
+    await ui.redraw({ ...PANE.props, view: { agentId: 'agent-2' } })
+    expect(await ui.find({ type: 'Text', text: /viewing general-purpose/ })).toBeDefined()
+    expect((await ui.find({ key: 'main-session' }))?.props).toMatchObject({ hotkey: 'm' })
+    await ui.press({ key: 'main-session' })
+    expect(state.viewed).toEqual(['agent-2', 'main'])
+    // A refused switch says why.
+    state.viewDeny = 'the view moved meanwhile'
+    await ui.press({ key: 'main-session' })
+    expect(state.toasts).toContain('Cannot show the main session: the view moved meanwhile')
+    state.viewDeny = undefined
+    // The engine draws the pane again for the main session: the button goes, however the view
+    // came back.
+    await ui.redraw({ ...PANE.props, view: {} })
+    expect(await ui.find({ key: 'main-session' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /viewing general-purpose/ })).toBeUndefined()
+
     // A finished model request of the agent counts at once; its turn's end adds only what the steps missed.
     for await (const chunk of $.turn.step({ turnId: 't-2', index: 0, model: 'claude-opus-5-5', messageCount: 3, agentId: 'agent-2' })) {
       void chunk
@@ -626,6 +644,13 @@ describe('opsx-board', () => {
     expect((await board.find({ type: 'Text', text: /proposal\.md$/ }))?.text).toContain('/repo/openspec/changes/demo-change/proposal.md')
     expect(await board.find({ key: 'artifact:tasks' })).toBeUndefined()
     expect((await board.find({ key: 'back' }))?.props).toMatchObject({ hotkey: 'b' })
+    // The reader offers the way back to the main session too, while an agent is in view.
+    expect(await board.find({ key: 'main-session' })).toBeUndefined()
+    await board.redraw({ ...PANE.props, view: { agentId: 'agent-1' } })
+    expect(await board.find({ key: 'main-session' })).toBeDefined()
+    expect(await board.find({ key: 'doc' })).toBeDefined()
+    await board.redraw({ ...PANE.props, view: {} })
+    expect(await board.find({ key: 'main-session' })).toBeUndefined()
 
     // Back shows the board again.
     await board.press({ key: 'back' })
