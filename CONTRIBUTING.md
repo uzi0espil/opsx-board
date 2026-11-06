@@ -31,9 +31,27 @@ Claude Code.
 - One change per pull request.
 - A change of behaviour comes with a test in `tests/`.
 - When the board shows or does something new, the README says so.
-- Write the title as the commit subject: what the change does, in the imperative, such as
-  "Hide Next while a stage is in progress". Pull requests are squash-merged, so the title
-  becomes the commit on `main`.
+- The title is a [Conventional Commit](https://www.conventionalcommits.org/) header. Pull
+  requests are squash-merged, so the title becomes the commit on `main`, and the release notes
+  sort the commits by its type. A check rejects any other title.
+
+### Titles
+
+`<type>(<scope>): <what the change does>`, where the scope is optional:
+
+- `feat: add a Jira provider for work items`
+- `fix(apply): hide Next while the run continues`
+- `docs: describe the Apply run`
+
+| Type | For | Release notes |
+| --- | --- | --- |
+| `feat` | something new the board shows or does | Features |
+| `fix` | a bug fix | Bug fixes |
+| `perf` | a faster board | Performance |
+| `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert` | anything else | Other changes |
+
+A breaking change, such as a renamed `board.yaml` key, takes a `!` after the type or the scope,
+or a `BREAKING CHANGE: <what changed>` line in the description. It goes under Breaking changes.
 
 ## Writing
 
@@ -42,8 +60,20 @@ One thing keeps one name: a stage, a task group, a change. Write new text the sa
 
 ## Releases
 
-The maintainer raises `version` in `.claude-plugin/plugin.json`, runs
-`claude plugin tag --push`, and writes the release notes on GitHub.
+1. A pull request titled `chore(release): <version>` raises `version` in
+   `.claude-plugin/plugin.json`. The commits since the last release set the least version:
+   - a breaking change raises the major version, or the minor version while it is 0;
+   - a `feat` raises the minor version;
+   - anything else raises the patch version.
+2. Once it is merged, the maintainer runs the Release workflow on `main`, from the Actions tab
+   or with `gh workflow run release.yml`. The workflow:
+   - refuses a version lower than the commits ask for;
+   - validates and tests the plugin;
+   - runs `claude plugin tag --push`, which creates the tag `opsx-board--v<version>`;
+   - creates the GitHub release, with notes from the commits since the last release.
+
+`node .github/scripts/release.mjs` prints the notes of the next release. It needs the version
+raised first.
 
 ## License
 
