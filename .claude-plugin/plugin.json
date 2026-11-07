@@ -1,6 +1,6 @@
 {
   "name": "opsx-board",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Live pane for the OpenSpec lifecycle of a change: stages, task groups, agents, and tokens.",
   "author": {
     "name": "Ousama Esbel",
