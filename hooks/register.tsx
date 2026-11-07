@@ -825,7 +825,38 @@ async function noteFigures($: Engine, contextPercent: number | undefined, costUs
   await update($, figuresAtom, () => ({ contextPercent, costUsd }))
 }
 
+// From this width, a fullscreen terminal docks a pane beside the transcript.
+const DOCK_COLUMNS = 110
+// The terminal width of the last re-seat, so a pane the engine keeps inline at a width is not
+// closed and opened again at every draw.
+let reseatedAt = 0
+
+/**
+ * The engine seats a pane when it opens it: inline above the prompt in a narrow terminal,
+ * docked beside the transcript in a fullscreen one from 110 columns. A pane seated inline stays
+ * inline when the terminal widens. A width change draws the pane again, so the board seats it
+ * again then: it closes and opens its pane, which docks. Only the person opens a pane in a
+ * narrow terminal, so the engine places the reopened pane from 110 columns.
+ */
+function reseat($: Engine, e: RenderInput<'Pane'>): void {
+  const columns = e.viewport?.columns ?? 0
+  if (e.props.placement !== 'inline' || e.viewport?.isFullscreen !== true || columns < DOCK_COLUMNS) {
+    reseatedAt = 0
+
+    return
+  }
+  if (columns === reseatedAt) {
+    return
+  }
+  reseatedAt = columns
+  $.clock.after(50, async () => {
+    await $.ui.close({ id: PANE })
+    await $.ui.open({ id: PANE, title: TITLE })
+  })
+}
+
 async function drawPane($: Engine, e: RenderInput<'Pane'>) {
+  reseat($, e)
   const doc = await read($, readerAtom)
   if (doc !== null) {
     return drawReader($, e, doc)
