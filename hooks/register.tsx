@@ -25,8 +25,10 @@ import {
   PRE_CHANGE,
   addUsage,
   agentTokens,
+  boardHome,
+  claimOldLedgers,
   fromModelUsage,
-  ledgerRoot,
+  projectLedgers,
   readOthers,
   tokensOf,
   usageBeyond,
@@ -101,7 +103,10 @@ const EDIT_TOOLS = ['Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell'] as co
 let isReportTool = false
 let cwd = ''
 let sessionId = ''
-let ledgerDir: string | undefined
+// The ledger folder of the session's project, and the session folder it was found for.
+let ledger: { cwd: string; home: string; root: string; dir: string } | undefined
+// The changes whose old, shared ledgers this session has already looked for.
+const claimedChanges = new Set<string>()
 let lastSignature = ''
 let lastGitAt = 0
 let lastPrAt = 0
@@ -352,18 +357,19 @@ async function flushLedger($: Engine, isForced: boolean): Promise<void> {
   if (!isLedgerDirty || (!isForced && now - lastLedgerAt < LEDGER_MS)) {
     return
   }
-  ledgerDir ??= await ledgerRoot($)
+  const project = await projectLedger($)
   sessionId ||= await $.session.id()
-  if (ledgerDir === undefined) {
+  if (project === undefined) {
     return
   }
   const [binding, main, agents] = await Promise.all([read($, bindingAtom), read($, mainAtom), read($, agentsAtom)])
   const change = binding.change ?? PRE_CHANGE
   isLedgerDirty = false
   lastLedgerAt = now
-  await writeLedger($, ledgerDir, {
+  await writeLedger($, project.dir, {
     change,
     sessionId,
+    root: project.root,
     updatedAt: now,
     main: main[change] ?? {},
     agents: agents
@@ -374,14 +380,41 @@ async function flushLedger($: Engine, isForced: boolean): Promise<void> {
   })
 }
 
+/**
+ * The ledger folder of the session's project. A project is its git repository, which every
+ * worktree of it shares (`$.session.repo()` gives the main working tree's root), else the
+ * session's folder. Found again when the session changes folder.
+ */
+async function projectLedger($: Engine): Promise<{ home: string; root: string; dir: string } | undefined> {
+  const here = await sessionCwd($)
+  if (ledger?.cwd === here) {
+    return ledger
+  }
+  const home = await boardHome($)
+  if (home === undefined) {
+    return undefined
+  }
+  const repo = await $.session.repo().catch(() => null)
+  const root = repo?.root || here
+  ledger = { cwd: here, home, root, dir: projectLedgers(home, root) }
+
+  return ledger
+}
+
 async function refreshOthers($: Engine): Promise<void> {
-  ledgerDir ??= await ledgerRoot($)
+  const project = await projectLedger($)
   sessionId ||= await $.session.id()
-  if (ledgerDir === undefined) {
+  if (project === undefined) {
     return
   }
-  const binding = await read($, bindingAtom)
-  const others = await readOthers($, ledgerDir, binding.change, sessionId).catch(() => undefined)
+  const [binding, snap] = await Promise.all([read($, bindingAtom), read($, snapshotAtom)])
+  // Once per change and session: a change this project holds takes its old, shared ledgers.
+  const change = binding.change
+  if (change !== undefined && snap?.change === change && !claimedChanges.has(change)) {
+    claimedChanges.add(change)
+    await claimOldLedgers($, project.home, project.dir, change, project.root).catch(() => false)
+  }
+  const others = await readOthers($, project.dir, change, sessionId).catch(() => undefined)
   if (others !== undefined) {
     await update($, othersAtom, () => others)
   }
@@ -555,6 +588,9 @@ async function startSession($: Engine, dir: string): Promise<void> {
     })
   }
   cwd = dir
+  // A new session finds its project, and looks for old ledgers, afresh.
+  ledger = undefined
+  claimedChanges.clear()
   $.clock.every(TICK_MS, () => void tick($))
   $.clock.every(GIT_MS, () => void refreshOthers($))
   $.clock.after(200, () => {

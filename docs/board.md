@@ -161,8 +161,19 @@ On Windows the `openspec` CLI runs through `cmd /c`, which reads `&` and `|` as 
 ## Tokens
 
 Tokens count per model request, so a running agent's total grows while it works. Totals for a
-change persist across sessions in `~/.claude/opsx-board/ledgers/<change>/<session>.json`, one
-file per session.
+change persist across sessions in
+`~/.claude/opsx-board/projects/<project>/ledgers/<change>/<session>.json`, one file per session.
+
+`<project>` is the name of the repository's folder and a hash of its path, such as
+`opsx-demo-3f2a1c9e`. Every worktree of a repository shares it, so a change keeps its totals in
+and out of a worktree. Outside a repository, the session's folder is the project. Two projects
+never share totals, also for changes of the same name, and `also active` in the header lists only
+the changes of the same project that other sessions worked on in the last 15 minutes.
+
+Up to 0.2.0, the ledgers sat in `~/.claude/opsx-board/ledgers/<change>/`, shared by every
+project. The first project that shows a change copies that change's old ledgers into its own
+folder, and leaves a `MOVED.txt` in the old folder, so that no other project takes them too. The
+old folder can be deleted by hand once no session of an older version runs.
 
 ## What the board reads
 

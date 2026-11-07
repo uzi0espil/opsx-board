@@ -1,6 +1,7 @@
-// Token arithmetic and the per-session ledger files that carry a change's totals
-// across sessions: <home>/.claude/opsx-board/ledgers/<change>/<sessionId>.json.
-// One file per session, so parallel sessions never write the same file.
+// Token arithmetic and the per-session ledger files that carry a change's totals across
+// sessions: <home>/.claude/opsx-board/projects/<project>/ledgers/<change>/<sessionId>.json.
+// One folder per project, so two projects never share a change's totals or its "also active"
+// list, and one file per session, so parallel sessions never write the same file.
 import type { EngineInterface, ModelUsage } from 'claude-code'
 
 import type { AgentRun, Others, Usage } from '../types'
@@ -58,27 +59,95 @@ export const sessionUsage = (main: Record<string, Usage> | undefined, agents: re
 export type LedgerFile = {
   change: string
   sessionId: string
+  /** The project's root folder, for a person who reads the ledgers by hand. */
+  root?: string
   updatedAt: number
   main: Record<string, Usage>
   agents: { id: string; type: string; group?: string; usage: Usage; totalTokens?: number }[]
 }
 
-export async function ledgerRoot($: Engine): Promise<string | undefined> {
+// A change, a session, and a project name a folder or a file under the board's folder, and nothing else.
+const isSafe = (name: string) => /^[A-Za-z0-9_][\w-]*$/.test(name)
+
+// Marks an old ledger folder whose files a project has copied. Not `.json`: an older version of
+// the board reads every `.json` file of a ledger folder as a ledger.
+export const MOVED_MARK = 'MOVED.txt'
+
+/** The board's own folder, `<home>/.claude/opsx-board`. */
+export async function boardHome($: Engine): Promise<string | undefined> {
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
 
-  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/opsx-board/ledgers`
+  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/opsx-board`
 }
 
-export async function writeLedger($: Engine, root: string, file: LedgerFile): Promise<void> {
-  // The change and the session name a folder and a file under the ledger root, and nothing else.
-  const isSafe = (name: string) => /^[A-Za-z0-9_][\w-]*$/.test(name)
+/**
+ * The folder name of a project: the name of its root folder, readable, then a hash of the
+ * whole path, so two projects named `app` stay apart. A Windows path ignores case.
+ */
+export const projectKey = (root: string): string => {
+  let path = root.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (/^[A-Za-z]:/.test(path)) {
+    path = path.toLowerCase()
+  }
+  // FNV-1a, 32 bits: the module has no crypto, and the hash only tells folders apart.
+  let hash = 0x811c9dc5
+  for (let i = 0; i < path.length; i++) {
+    hash = Math.imul(hash ^ path.charCodeAt(i), 0x01000193) >>> 0
+  }
+  const name =
+    (path.split('/').at(-1) ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'project'
+
+  return `${name}-${hash.toString(16).padStart(8, '0')}`
+}
+
+/** The ledger folder of the project at `root`. */
+export const projectLedgers = (home: string, root: string): string => `${home}/projects/${projectKey(root)}/ledgers`
+
+export async function writeLedger($: Engine, dir: string, file: LedgerFile): Promise<void> {
   if (!isSafe(file.change) || !isSafe(file.sessionId)) {
     return
   }
-  await $.fs.write(`${root}/${file.change}/${file.sessionId}.json`, JSON.stringify(file))
+  await $.fs.write(`${dir}/${file.change}/${file.sessionId}.json`, JSON.stringify(file))
 }
 
-/** Sums the ledgers other sessions wrote for `change`, and names changes other sessions work on now. */
+/**
+ * Up to 0.2.0 the ledgers of every project shared one folder per change name,
+ * `<home>/.claude/opsx-board/ledgers/<change>`. The first project that shows a change copies the
+ * old ledgers of that name into its own folder, and marks the old folder so that no other project
+ * takes them too. A file the project already has stays as it is. Says whether it copied.
+ */
+export async function claimOldLedgers($: Engine, home: string, dir: string, change: string, root: string): Promise<boolean> {
+  if (change === PRE_CHANGE || !isSafe(change)) {
+    return false
+  }
+  const old = `${home}/ledgers/${change}`
+  const entries = await $.fs.list(old).catch(() => undefined)
+  if (entries === undefined || entries.some(entry => entry.name === MOVED_MARK)) {
+    return false
+  }
+  const present = new Set((await $.fs.list(`${dir}/${change}`).catch(() => [])).map(entry => entry.name))
+  for (const entry of entries) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json') || !isSafe(entry.name.slice(0, -5)) || present.has(entry.name)) {
+      continue
+    }
+    const text = await $.fs.read(`${old}/${entry.name}`).catch(() => undefined)
+    if (typeof text === 'string') {
+      await $.fs.write(`${dir}/${change}/${entry.name}`, text)
+    }
+  }
+  await $.fs.write(`${old}/${MOVED_MARK}`, `The ledgers of this folder moved to the project at ${root}.\n`)
+
+  return true
+}
+
+/**
+ * Sums the ledgers other sessions of the project wrote for `change`, and names the project's
+ * changes that other sessions work on now. `root` is the project's ledger folder (`projectLedgers`).
+ */
 export async function readOthers($: Engine, root: string, change: string | undefined, sessionId: string): Promise<Others> {
   const now = await $.clock.now()
   const others: Others = { usage: zeroUsage(), sessions: 0, activeChanges: [], phases: [] }

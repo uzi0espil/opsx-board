@@ -20,10 +20,17 @@ import {
   TASKS_MD,
   TEAM_SCHEMA_YAML,
 } from './fixtures'
+import { MOVED_MARK, projectKey, projectLedgers } from '../hooks/ledger'
 
 const CWD = '/repo'
 const ARCHIVE_HASH = 'c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00'
 const CHANGE = `${CWD}/openspec/changes/demo-change`
+// The ledger folder of the project at CWD.
+const LEDGERS = projectLedgers('/home/me/.claude/opsx-board', CWD)
+
+/** A ledger file of another session, with `input` tokens in its apply phase. */
+const ledgerText = (change: string, sessionId: string, input: number) =>
+  JSON.stringify({ change, sessionId, updatedAt: 1, main: { apply: { input, output: 0, cacheRead: 0, cacheWrite: 0 } }, agents: [] })
 
 
 const PANE = {
@@ -46,6 +53,8 @@ type World = {
   viewed: string[]
   /** Set, the engine refuses to show the agent, with this reason. */
   viewDeny?: string
+  /** The repository root `$.session.repo()` gives; null outside a repository. */
+  repoRoot: string | null
   toasts: string[]
   tools: string[]
   statuses: (string | undefined)[]
@@ -86,6 +95,7 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     files: new Map(Object.entries(files).map(([path, text]) => [norm(path), text])),
     writes: new Map(),
     viewed: [],
+    repoRoot: CWD,
     toasts: [],
     tools: [],
     statuses: [],
@@ -122,6 +132,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'sess-1' }))
   on('session.id', () => ({ value: 'sess-1' }))
+  // The repository of the session: the main working tree's root, also from a worktree.
+  on('session.repo', () => ({ value: state.repoRoot === null ? null : { root: state.repoRoot, remote: null, internal: false, name: null } }))
   on('command.register', () => ({ value: { command: 'opsx-board' } }))
   on('tool.register', (_, e) => {
     state.tools.push(e.name)
@@ -503,9 +515,79 @@ describe('opsx-board', () => {
       reason: 'answer',
     })
     await clock.advance(6000)
-    const ledger = state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json')
+    const ledger = state.writes.get(`${LEDGERS}/demo-change/sess-1.json`)
     expect(ledger).toBeDefined()
     expect(JSON.parse(ledger ?? '{}').main).toEqual({ apply: { input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 } })
+    expect(JSON.parse(ledger ?? '{}').root).toBe(CWD)
+  })
+
+  test("the ledgers are per project: another project's change of the same name and its active changes stay out", async ($, on) => {
+    // A file's time is its length, so near zero every seeded ledger is recent.
+    const clock = mock.clock(on, { now: 60_000 })
+    const elsewhere = projectLedgers('/home/me/.claude/opsx-board', '/elsewhere')
+    world(on, {
+      ...DEMO_FILES,
+      // Other sessions of this project: on the same change, and on another one.
+      [`${LEDGERS}/demo-change/sess-2.json`]: ledgerText('demo-change', 'sess-2', 7000),
+      [`${LEDGERS}/other-change/sess-3.json`]: ledgerText('other-change', 'sess-3', 1),
+      // Another project: a change of the same name, and one of its own.
+      [`${elsewhere}/demo-change/sess-4.json`]: ledgerText('demo-change', 'sess-4', 900_000),
+      [`${elsewhere}/phase11-exit-drift/sess-5.json`]: ledgerText('phase11-exit-drift', 'sess-5', 1),
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(31_000)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ type: 'Text', text: /tok on this change/ }))?.text).toContain('7.0k tok on this change (+1 other sessions)')
+    expect((await board.find({ type: 'Text', text: /^also active:/ }))?.text).toBe('also active: other-change')
+    await board.unmount()
+  })
+
+  test('a worktree keeps the ledgers of its repository; outside git, the folder is the project', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const worktree = `${CWD}/.claude/worktrees/demo`
+    const state = world(on, rooted(DEMO_FILES, worktree), 'demo-change')
+    on('session.cwd', () => ({ value: worktree }))
+    on('turn.complete', () => ({ text: '' }))
+    await $.session.start({ cwd: worktree, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const turn = { answer: 'ok', durationMs: 1, isAborted: false, usage: { ...USAGE, model: 'm' }, reason: 'answer' as const }
+    await $.turn.complete({ ...turn, turnId: 't-1' })
+    await clock.advance(6000)
+    expect(state.writes.get(`${LEDGERS}/demo-change/sess-1.json`)).toBeDefined()
+
+    // Without a repository, the session's folder names the project.
+    state.repoRoot = null
+    await $.session.start({ cwd: worktree, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.turn.complete({ ...turn, turnId: 't-2' })
+    await clock.advance(6000)
+    expect(state.writes.get(`${projectLedgers('/home/me/.claude/opsx-board', worktree)}/demo-change/sess-1.json`)).toBeDefined()
+    expect(projectKey(worktree)).toMatch(/^demo-[0-9a-f]{8}$/)
+    expect(projectKey('E:\\Dev\\Demo')).toBe(projectKey('e:/dev/demo/'))
+  })
+
+  test('the old shared ledgers of a change move into the first project that shows it, and only once', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const old = '/home/me/.claude/opsx-board/ledgers'
+    const text = ledgerText('demo-change', 'sess-0', 5000)
+    const state = world(on, {
+      ...DEMO_FILES,
+      [`${old}/demo-change/sess-0.json`]: text,
+      [`${old}/other-change/sess-9.json`]: ledgerText('other-change', 'sess-9', 1),
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(31_000)
+    expect(state.writes.get(`${LEDGERS}/demo-change/sess-0.json`)).toBe(text)
+    expect(state.writes.get(`${old}/demo-change/${MOVED_MARK}`)).toContain(CWD)
+    // The project does not hold the other change, so its old ledgers stay where they are.
+    expect([...state.writes.keys()].some(path => path.includes('other-change'))).toBe(false)
+
+    // A folder another project took is left alone.
+    state.writes.clear()
+    state.files.set(`${old}/demo-change/${MOVED_MARK}`, 'moved')
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(31_000)
+    expect(state.writes.has(`${LEDGERS}/demo-change/sess-0.json`)).toBe(false)
   })
 
   test('the spec-reviewer report becomes finding counts', async ($, on) => {
@@ -552,7 +634,7 @@ describe('opsx-board', () => {
     await $.command.run(typed('opsx:propose', 'demo-change'))
     // The ledger writes at most once per 5 s, and the `_pre` write has just happened.
     await clock.advance(12_000)
-    const ledger = JSON.parse(state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json') ?? '{}')
+    const ledger = JSON.parse(state.writes.get(`${LEDGERS}/demo-change/sess-1.json`) ?? '{}')
     expect(ledger.main?.design).toEqual({ input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 })
   })
 
@@ -944,7 +1026,7 @@ describe('opsx-board', () => {
     await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't-x', usage: { ...USAGE, model: 'm' }, reason: 'answer' })
     await clock.advance(6000)
     expect(state.runs.some(run => run.includes('&') || run.includes('..'))).toBe(false)
-    expect([...state.writes.keys()].every(path => path.startsWith('/home/me/.claude/opsx-board/ledgers/demo-change/'))).toBe(true)
+    expect([...state.writes.keys()].every(path => path.startsWith(`${LEDGERS}/demo-change/`))).toBe(true)
   })
 
   test('a subagent gets the progress note only during an apply run', async ($, on) => {
@@ -1001,7 +1083,7 @@ describe('opsx-board', () => {
     await $.command.run(typed('opsx:propose', 'demo-change'))
     // The ledger writes at most once per 5 s, and the `_pre` write has just happened.
     await clock.advance(12_000)
-    const ledger = JSON.parse(state.writes.get('/home/me/.claude/opsx-board/ledgers/demo-change/sess-1.json') ?? '{}')
+    const ledger = JSON.parse(state.writes.get(`${LEDGERS}/demo-change/sess-1.json`) ?? '{}')
     expect(ledger.main?.explore).toEqual({ input: 1000, output: 2000, cacheRead: 40_000, cacheWrite: 500 })
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  Plan › ✔  Explore › ')
