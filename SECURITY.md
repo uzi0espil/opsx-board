@@ -15,8 +15,10 @@ The plugin runs inside the Claude Code session of the person who installs it. In
 - reads the files of the repository the session works in: the OpenSpec changes, the schema, a
   `board.yaml`, and the files the `board.yaml` names;
 - reads `~/.claude/opsx-board/schemas/<schema>/board.yaml`, the person's own copy;
-- writes token ledgers to `~/.claude/opsx-board/ledgers/`, and reads the ledgers of the
-  person's other sessions;
+- writes token ledgers to `~/.claude/opsx-board/projects/<project>/ledgers/`, and reads the
+  ledgers of the person's other sessions of the same project. It copies the person's ledgers
+  from `~/.claude/opsx-board/ledgers/`, where versions up to 0.2.0 kept them, and leaves a
+  `MOVED.txt` there;
 - runs `openspec`, `git`, and `gh` in the session's working directory. On Windows, `openspec`
   runs through `cmd /c`;
 - opens a URL, or a file of a listed type (HTML, PDF, image, Markdown, text, YAML, JSON), with
