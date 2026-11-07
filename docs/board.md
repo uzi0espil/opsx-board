@@ -6,6 +6,7 @@ The examples on this page use the example of [board.yaml](board-yaml.md#add-stag
 Plan stage of backlog items (`WI-12`), a Design stage of a `/designer` command, and a review
 agent, labeled Review.
 
+- [Where the pane sits](#where-the-pane-sits)
 - [Which change the pane shows](#which-change-the-pane-shows)
 - [Stages](#stages)
 - [Clicks](#clicks)
@@ -15,6 +16,21 @@ agent, labeled Review.
 - [Progress report tool](#progress-report-tool)
 - [Tokens](#tokens)
 - [What the board reads](#what-the-board-reads)
+
+## Where the pane sits
+
+Claude Code places the pane:
+
+- docked beside the transcript, in the fullscreen layout from 110 columns;
+- inline above the prompt, in a narrower terminal or on the main screen (`CLAUDE_CODE_NO_FLICKER=0`,
+  tmux by default).
+
+A workflow command opens the pane by itself from 144 columns, or from 110 once you have opened it
+with `/opsx-board`. In a narrower terminal, `/opsx-board` opens it.
+
+Claude Code seats a pane when it opens it. When a terminal that was too narrow widens to 110
+columns in the fullscreen layout, the board closes its pane and opens it again, so that it docks
+beside the transcript.
 
 ## Which change the pane shows
 

@@ -452,6 +452,42 @@ describe('opsx-board', () => {
     await ui.unmount()
   })
 
+  test('a pane seated inline in a narrow terminal seats itself again, docked, once the terminal widens', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES)
+    on('command.run', () => ({ text: '' }))
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const inline = { ...PANE, props: { ...PANE.props, placement: 'inline' as const } }
+    const seat = async (viewport: { columns: number; rows: number; isFullscreen?: boolean }) => {
+      const pane = await $.ui.mount({ ...inline, surface: 'terminal', viewport })
+      await clock.advance(100)
+      await pane.unmount()
+    }
+
+    // Narrow, or on the main screen where every pane is inline, the pane stays where it is.
+    await seat({ columns: 90, rows: 40, isFullscreen: true })
+    await seat({ columns: 180, rows: 40, isFullscreen: false })
+    expect(state.closed).toEqual([])
+
+    // Wide in fullscreen: the board closes its pane and opens it again, and the engine docks it.
+    const opened = state.opened.length
+    await seat({ columns: 160, rows: 40, isFullscreen: true })
+    expect(state.closed).toEqual(['opsx-board'])
+    expect(state.opened.slice(opened)).toEqual(['opsx-board'])
+    // A close of its own is no dismissal: the pane still opens by itself on a workflow command.
+    const before = state.opened.length
+    await $.command.run(typed('opsx:apply', 'demo-change'))
+    await clock.advance(300)
+    expect(state.opened.slice(before)).toContain('opsx-board')
+
+    // Kept inline at that width, it does not try again; at another width it does.
+    await seat({ columns: 160, rows: 40, isFullscreen: true })
+    expect(state.closed).toHaveLength(1)
+    await seat({ columns: 200, rows: 40, isFullscreen: true })
+    expect(state.closed).toHaveLength(2)
+  })
+
   test('a main-loop turn counts under the phase, and the ledger file is per session', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES)
