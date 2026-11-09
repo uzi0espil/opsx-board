@@ -19,7 +19,9 @@ The stages come from OpenSpec:
   checks, and the archive folder. The tasks come from the files that `apply.tracks` of the
   schema names, a path or a glob in the change folder. A schema without `apply.tracks` tracks no
   tasks, as the CLI does.
-- **PR** comes from `gh`. Without `gh`, the board shows no PR stage. An archived change finds
+- **PR** comes from `gh`, when the `origin` remote of the repository is on GitHub: a host whose
+  name holds `github`, or another host that `gh` is logged in to, such as a GitHub Enterprise
+  server. Without `gh`, or on another host, the board shows no PR stage. An archived change finds
   the pull request that its squash commit names. In a checkout of the change's own branch, it
   finds the pull request of the branch whose commits hold the archive commit. While that pull
   request is open, the board reads it again once a minute, until it is merged or closed.

@@ -21,8 +21,10 @@ export const GITHUB_WARNING = 'GitHub: '
 type IssueInfo = { title: string; state: string; stateReason?: string; url: string }
 type Fetched = { at: number; info?: IssueInfo; error?: string }
 
-// Per session: whether `gh` runs, and what it last gave for each issue.
+// Per session: whether `gh` runs, whether it is logged in to each host it was asked about, and
+// what it last gave for each issue.
 let ghCheck: { at: number; isInstalled: boolean } | undefined
+const ghHosts = new Map<string, boolean>()
 const fetched = new Map<string, Fetched>()
 
 async function gh($: Engine, args: readonly string[], cwd: string) {
@@ -37,6 +39,22 @@ export async function hasGh($: Engine, cwd: string, now: number): Promise<boolea
   }
 
   return ghCheck.isInstalled
+}
+
+/**
+ * Whether `gh` is logged in to a host whose name does not tell its kind, such as a GitHub
+ * Enterprise server with a name of its own. Asked once per host and session.
+ */
+export async function isGhHost($: Engine, cwd: string, host: string): Promise<boolean> {
+  const known = ghHosts.get(host)
+  if (known !== undefined) {
+    return known
+  }
+  const ran = await gh($, ['auth', 'status', '--hostname', host], cwd)
+  const isLoggedIn = ran?.exitCode === 0
+  ghHosts.set(host, isLoggedIn)
+
+  return isLoggedIn
 }
 
 /** The `owner/name` of a GitHub issue or pull request URL. */
@@ -244,5 +262,6 @@ export async function issueDoc($: Engine, cwd: string, item: PlanningItem, home:
 /** For the tests: the session's caches start empty. */
 export const resetGithub = (): void => {
   ghCheck = undefined
+  ghHosts.clear()
   fetched.clear()
 }

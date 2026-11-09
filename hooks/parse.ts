@@ -303,6 +303,29 @@ export const parseDecisions = (md: string): { approvedAt?: string; updatedAt?: s
 export const parseCreated = (yaml: string): string | undefined => /^created:\s*['"]?(\d{4}-\d{2}-\d{2})/m.exec(yaml)?.[1]
 
 /**
+ * The host of a git remote URL, in lowercase: `https://host/...`, `ssh://user@host:port/...`,
+ * or the scp form `user@host:path`. A local path or a `file://` URL has none. A name with any
+ * character a host name does not use gives none, so it never reaches a command line.
+ */
+export const remoteHost = (url: string): string | undefined => {
+  const text = url.trim()
+  const withScheme = /^([a-z][\w+.-]*):\/\/(?:[^@/]*@)?([^/:?#]*)/i.exec(text)
+  // The scp form has a colon before any slash. One letter before the colon is a Windows drive.
+  const host = withScheme ? (withScheme[1]?.toLowerCase() === 'file' ? undefined : withScheme[2]) : /^(?:[^@/:]+@)?([^@/:\\]{2,}):/.exec(text)?.[1]
+  const lower = host?.toLowerCase()
+
+  return lower !== undefined && /^[a-z0-9][a-z0-9.-]*$/.test(lower) ? lower : undefined
+}
+
+/**
+ * The code host a host name names: GitHub (github.com, a GitHub Enterprise server, an SSH alias
+ * such as github-work, or a GHE.com subdomain), GitLab (gitlab.com or a GitLab server), or none
+ * that the name tells.
+ */
+export const hostKind = (host: string): 'github' | 'gitlab' | undefined =>
+  host.includes('github') || host.endsWith('.ghe.com') ? 'github' : host.includes('gitlab') ? 'gitlab' : undefined
+
+/**
  * `git log --format=%h%x09%s` lines whose subject carries the change as its scope, as
  * `feat(<change>): ...`. The commit hints tell the kinds apart; without them every commit is `other`.
  */

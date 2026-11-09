@@ -7,6 +7,7 @@ import {
   countFindings,
   designFromArgs,
   findMarker,
+  hostKind,
   inferGroup,
   isChangeName,
   itemBlock,
@@ -19,6 +20,7 @@ import {
   phaseOfCommand,
   readVerdict,
   reflowTables,
+  remoteHost,
   tableCells,
 } from '../hooks/parse'
 import { readHints } from '../hooks/schema'
@@ -189,5 +191,22 @@ describe('parse', () => {
     expect(changeFromBranch('worktree-demo-change', ['demo-change', 'other'])).toBe('demo-change')
     expect(changeFromBranch('feat/other', ['demo-change', 'other'])).toBe('other')
     expect(changeFromBranch('worktree-r2-wi-12-P2', ['demo-change'])).toBeUndefined()
+  })
+
+  test('the host of a remote URL, and the kind its name tells', async () => {
+    const hosts = [
+      'https://github.com/o/r.git',
+      'https://oauth2@GitLab.example.com/group/sub/r.git',
+      'ssh://git@git.corp.example:2222/o/r.git',
+      'git@github-work:o/r.git',
+      'gitlab.com:o/r',
+      'https://acme.ghe.com/o/r',
+    ].map(remoteHost)
+    expect(hosts).toEqual(['github.com', 'gitlab.example.com', 'git.corp.example', 'github-work', 'gitlab.com', 'acme.ghe.com'])
+    expect(hosts.map(host => hostKind(host ?? ''))).toEqual(['github', 'gitlab', undefined, 'github', 'gitlab', 'github'])
+    // A local path, a Windows drive, a file URL, and an odd name have no host.
+    for (const url of ['/srv/git/r.git', '../r', 'C:/repos/r', 'C:\\repos\\r', 'file:///srv/git/r.git', 'https://ho$t/o/r', '']) {
+      expect(remoteHost(url)).toBeUndefined()
+    }
   })
 })

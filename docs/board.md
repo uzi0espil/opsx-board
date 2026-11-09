@@ -140,8 +140,8 @@ runs:
 Explore, Design, and Propose `in review` are active, but no work runs in them after the turn of
 their command. Then Next offers the step that ends them.
 
-Without `gh`, the board cannot see a pull request. It shows no PR stage, and when no task is
-`[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
+Without `gh`, or in a repository that is not on GitHub, the board cannot see a pull request. It
+shows no PR stage, and when no task is `[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
 
 ## Progress report tool
 
