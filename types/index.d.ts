@@ -151,14 +151,19 @@ export type Commit = {
   group?: string
 }
 
-/** `closes`: the issues the pull request closes, when the hints ask for them. */
+/**
+ * A pull request, or a GitLab merge request: `number` is its `iid` there, and `state` is `OPEN`,
+ * `MERGED`, or `CLOSED` on both hosts. `closes`: the issues the pull request closes, when the
+ * hints ask for them.
+ */
 export type PullRequest = { number: number; state: string; url: string; closes?: IssueRef[] }
 
 /**
- * The host whose pull requests the board reads: `github` with `gh`. `none` when it reads none:
- * the repository's `origin` remote is not on GitHub, or `gh` is not installed.
+ * The host whose pull requests the board reads: `github` with `gh`, `gitlab` with `glab`, where
+ * a pull request is a merge request. `none` when it reads none: the repository's `origin` remote
+ * is on neither host, or the host's CLI is not installed.
  */
-export type PrHost = 'github' | 'none'
+export type PrHost = 'github' | 'gitlab' | 'none'
 
 export type Snapshot = {
   change: string

@@ -35,7 +35,7 @@ import {
   writeLedger,
   zeroUsage,
 } from './ledger'
-import { currentStage, findingsNote, groupViews, isApplyRun, isDesigning, isExploring, phaseOfStage, stagesOf, statusLine } from './model'
+import { currentStage, findingsNote, groupViews, isApplyRun, isDesigning, isExploring, phaseOfStage, prWords, stagesOf, statusLine } from './model'
 import {
   changeFromArgs,
   changeFromBranch,
@@ -345,7 +345,8 @@ async function announce($: Engine, before: Snapshot | null, after: Snapshot): Pr
     }
   }
   if (before.pr === undefined && after.pr !== undefined) {
-    notify($, `Pull request #${after.pr.number} ${after.pr.state.toLowerCase()}`)
+    const words = prWords(after.prHost)
+    notify($, `${words.title} ${words.ref(after.pr.number)} ${after.pr.state.toLowerCase()}`)
   }
   if (before.archivedAs === undefined && after.archivedAs !== undefined) {
     notify($, `${after.change} archived`)
@@ -817,8 +818,8 @@ async function noteToolUse($: Engine, input: { tool: string; command?: string; f
       const at = await $.clock.now()
       await update($, liveAtom, live => ({ ...live, isValidateOk: !isError, validateAt: at }))
     }
-    if (/\b(openspec|git|gh|mv|rm)\b/.test(command)) {
-      void refresh($, { isGit: /\bgit\b/.test(command), isPr: /\bgit\s+push\b|\bgh\s+pr\b/.test(command) })
+    if (/\b(openspec|git|gh|glab|mv|rm)\b/.test(command)) {
+      void refresh($, { isGit: /\bgit\b/.test(command), isPr: /\bgit\s+push\b|\bgh\s+pr\b|\bglab\s+mr\b/.test(command) })
     }
     return
   }

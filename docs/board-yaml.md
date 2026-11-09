@@ -19,12 +19,15 @@ The stages come from OpenSpec:
   checks, and the archive folder. The tasks come from the files that `apply.tracks` of the
   schema names, a path or a glob in the change folder. A schema without `apply.tracks` tracks no
   tasks, as the CLI does.
-- **PR** comes from `gh`, when the `origin` remote of the repository is on GitHub: a host whose
-  name holds `github`, or another host that `gh` is logged in to, such as a GitHub Enterprise
-  server. Without `gh`, or on another host, the board shows no PR stage. An archived change finds
-  the pull request that its squash commit names. In a checkout of the change's own branch, it
-  finds the pull request of the branch whose commits hold the archive commit. While that pull
-  request is open, the board reads it again once a minute, until it is merged or closed.
+- **PR** comes from the host of the repository's `origin` remote: from `gh` on GitHub, and from
+  `glab` on GitLab, where the stage is **MR** and a merge request shows as `!N`. A host whose
+  name holds `github` or `gitlab` is that host. Another host is the one whose CLI is logged in to
+  it, `gh` first, such as a GitHub Enterprise or GitLab server. Without that CLI, or on another
+  host, the board shows no PR stage. An archived change finds the pull request that its squash
+  commit names. In a checkout of the change's own branch, it finds the pull request of the
+  branch whose commits hold the archive commit. On GitLab, it finds the merge request that
+  GitLab relates to the archive commit. While that pull request is open, the board reads it
+  again once a minute, until it is merged or closed.
 
 ## Add stages with board.yaml
 

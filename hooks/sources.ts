@@ -1,9 +1,10 @@
 // Reads what the workflow writes: the openspec CLI, the change files, the schema and its
-// board.yaml hints, the files the hints name, git, and gh. Every read goes through `$`.
+// board.yaml hints, the files the hints name, git, gh, and glab. Every read goes through `$`.
 import type { EngineInterface } from 'claude-code'
 
 import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PrHost, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
 import { GITHUB_WARNING, closingRefs, collectIssues, hasGh, isGhHost } from './github'
+import { branchMergeRequest, commitMergeRequest, hasGlab, isGlabHost, viewMergeRequest } from './gitlab'
 import {
   classifyCommits,
   findMarker,
@@ -457,12 +458,22 @@ async function branchPullRequest($: Engine, cwd: string, branch: string, hash: s
  * The pull request that merged an archived change: the squash commit that added its archive
  * folder names it as `(#N)`, and `gh` gives that pull request's URL. In a checkout of the
  * change's own branch, the commit that added the folder has no number: the pull request of
- * the branch counts when its commits hold that commit.
+ * the branch counts when its commits hold that commit. GitLab relates a commit to its merge
+ * requests itself, so on GitLab the commit alone finds the merge request.
  */
-async function mergedPullRequest($: Engine, cwd: string, archivedAs: string, branch: string | undefined): Promise<PullRequest | undefined> {
+async function mergedPullRequest(
+  $: Engine,
+  cwd: string,
+  archivedAs: string,
+  branch: string | undefined,
+  host: PrHost,
+): Promise<PullRequest | undefined> {
   const path = `openspec/changes/archive/${archivedAs}`
   const log = await run($, ['git', 'log', '-1', '--diff-filter=A', '--format=%H%x09%s', '--', path], cwd)
   const [hash = '', subject = ''] = (log?.exitCode === 0 ? log.stdout.trim() : '').split('\t')
+  if (host === 'gitlab') {
+    return commitMergeRequest($, cwd, hash)
+  }
   // The last `(#N)` of the subject; a `[skip ci]` may follow it.
   const number = [...subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
   if (number === undefined) {
@@ -486,19 +497,27 @@ async function viewPullRequest($: Engine, cwd: string, number: number): Promise<
 }
 
 /**
- * The host whose pull requests the board reads, from the `origin` remote: GitHub for a host
- * whose name tells GitHub, or for another host that `gh` is logged in to. None without `gh`,
- * without a remote, or for a host of another kind, such as GitLab.
+ * The host whose pull requests the board reads, from the `origin` remote: the host its name
+ * tells, GitHub or GitLab, when that host's CLI is installed. A host whose name tells neither is
+ * the one whose CLI is logged in to it, `gh` first. None without a remote or such a CLI.
  */
 async function readPrHost($: Engine, cwd: string, now: number): Promise<PrHost> {
   const ran = await run($, ['git', 'remote', 'get-url', 'origin'], cwd)
   const host = ran?.exitCode === 0 ? remoteHost(ran.stdout) : undefined
-  const kind = host === undefined ? undefined : hostKind(host)
-  if (host === undefined || kind === 'gitlab' || !(await hasGh($, cwd, now))) {
+  if (host === undefined) {
     return 'none'
   }
+  const kind = hostKind(host)
+  if (kind !== undefined) {
+    const isInstalled = kind === 'github' ? await hasGh($, cwd, now) : await hasGlab($, cwd, now)
 
-  return kind === 'github' || (await isGhHost($, cwd, host)) ? 'github' : 'none'
+    return isInstalled ? kind : 'none'
+  }
+  if ((await hasGh($, cwd, now)) && (await isGhHost($, cwd, host))) {
+    return 'github'
+  }
+
+  return (await hasGlab($, cwd, now)) && (await isGlabHost($, cwd, host)) ? 'gitlab' : 'none'
 }
 
 export type GitOptions = { isGitDue: boolean; isPrDue: boolean; hints: BoardHints; archivedAs?: string; now: number }
@@ -525,15 +544,17 @@ export async function collectGit(
   // Read with git, so the PR stage hides from the first snapshot on, and a remote added later shows.
   const prHost = isGitDue || previous?.prHost === undefined ? await readPrHost($, cwd, now) : previous.prHost
   const isPrRead = prHost !== 'none'
+  const isGitlab = prHost === 'gitlab'
   let pr = previous?.pr
   if (isPrRead && archivedAs === undefined && isPrDue && branch !== undefined) {
-    pr = (await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)) ?? pr
+    const found = isGitlab ? await branchMergeRequest($, cwd, branch) : await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)
+    pr = found ?? pr
   }
   if (isPrRead && archivedAs !== undefined && pr === undefined && isGitDue) {
-    pr = await mergedPullRequest($, cwd, archivedAs, branch)
+    pr = await mergedPullRequest($, cwd, archivedAs, branch, prHost)
   } else if (isPrRead && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
     // The change was archived on its branch before the merge: read the pull request until it closes.
-    const viewed = await viewPullRequest($, cwd, pr.number)
+    const viewed = isGitlab ? await viewMergeRequest($, cwd, pr.number) : await viewPullRequest($, cwd, pr.number)
     pr = viewed === undefined ? pr : { ...pr, ...viewed }
   }
 

@@ -1,7 +1,7 @@
 // Pure: what stage a change is in, what runs, and what comes next. No `$` here.
 // OpenSpec gives Explore, Propose (the schema's artifacts), Apply, Verify, and Archive. The
 // board.yaml hints add the stages outside OpenSpec (Plan, Design) and the project's names.
-import type { AgentRun, BoardHints, DesignView, Live, Phase, Report, Snapshot, TaskGroup } from '../types'
+import type { AgentRun, BoardHints, DesignView, Live, Phase, PrHost, Report, Snapshot, TaskGroup } from '../types'
 import { agentTokens } from './ledger'
 import { changeFromArgs, countDone, formatTokens, phaseOfCommand } from './parse'
 
@@ -33,6 +33,23 @@ export type GroupView = {
 }
 
 const RECENT_MS = 30 * 60 * 1000
+
+/**
+ * The words for the pull request of a host: GitLab calls it a merge request, MR, and numbers it
+ * `!N`. A snapshot without a host keeps the GitHub words.
+ */
+export type PrWords = {
+  label: 'PR' | 'MR'
+  name: 'pull request' | 'merge request'
+  /** The name at the start of a sentence. */
+  title: 'Pull request' | 'Merge request'
+  ref: (number: number) => string
+}
+
+export const prWords = (host: PrHost | undefined): PrWords =>
+  host === 'gitlab'
+    ? { label: 'MR', name: 'merge request', title: 'Merge request', ref: number => `!${number}` }
+    : { label: 'PR', name: 'pull request', title: 'Pull request', ref: number => `#${number}` }
 
 export const isRunning = (agent: AgentRun): boolean => agent.status === 'running'
 
@@ -232,8 +249,8 @@ export const stagesOf = (
   }
 
   // The apply run goes on to the pull request, and is over once the tasks are settled and
-  // the pull request is open. Without a pull request to read (no gh, or a repository that is
-  // not on GitHub) there is no PR stage: the tasks alone decide.
+  // the pull request is open. Without a pull request to read (no gh or glab, or a repository on
+  // neither GitHub nor GitLab) there is no PR stage: the tasks alone decide.
   const hasPr = snap?.pr !== undefined
   const isPrRead = snap?.prHost !== 'none'
   const isApplyOpen = !isTasksSettled(groups) || (isPrRead && !hasPr && !isArchived)
@@ -280,16 +297,17 @@ export const stagesOf = (
     isRunning: reviewRunning || isCommandRunning('verify') || isAgentRunning('verify', 'review'),
   }
 
-  // Without a pull request to read, the board shows no PR stage.
+  // Without a pull request to read, the board shows no PR stage. On GitLab it is the MR stage.
+  const words = prWords(snap?.prHost)
   const pr: Stage | undefined =
     !isPrRead && !hasPr
       ? undefined
       : {
           key: 'pr',
-          label: 'PR',
+          label: words.label,
           isOptional: false,
           state: hasPr || isArchived ? 'done' : 'pending',
-          note: snap?.pr === undefined ? undefined : `#${snap.pr.number} ${snap.pr.state.toLowerCase()}`,
+          note: snap?.pr === undefined ? undefined : `${words.ref(snap.pr.number)} ${snap.pr.state.toLowerCase()}`,
         }
 
   const archive: Stage = {
@@ -459,9 +477,10 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
   }
   // Without a PR stage, the change goes from its tasks to verify, then to the archive.
   const prStage = byKey('pr')
+  const { name } = prWords(snap.prHost)
   if (!isTasksSettled(snap.groups) || (prStage !== undefined && prStage.state !== 'done')) {
     const isStopped = live.command?.name === 'opsx:apply' && (live.stoppedAt ?? 0) >= live.command.at
-    const why = isStopped ? 'the apply run stopped. Apply again to go on' : prStage === undefined ? 'tasks remain' : 'tasks, review, or the pull request remain'
+    const why = isStopped ? 'the apply run stopped. Apply again to go on' : prStage === undefined ? 'tasks remain' : `tasks, review, or the ${name} remain`
 
     return { text: `/opsx:apply ${change}`, why: `${why}${pending}` }
   }
@@ -469,7 +488,7 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
     return { text: `/opsx:verify ${change}`, why: `the tasks are done. Verify the change before the archive${pending}` }
   }
   const partial = snap.groups.flatMap(group => group.tasks).filter(task => task.mark === '~').length
-  const ready = prStage === undefined ? 'the change is verified' : 'the pull request is open'
+  const ready = prStage === undefined ? 'the change is verified' : `the ${name} is open`
 
   return {
     text: `/opsx:archive ${change}`,

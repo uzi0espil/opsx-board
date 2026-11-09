@@ -82,7 +82,26 @@ type World = {
   remote: string | undefined
   /** The hosts `gh auth status --hostname` finds a login for. */
   ghHosts: string[]
+  /** Set, `glab` is not installed: the process cannot start. */
+  isGlabMissing: boolean
+  /** The hosts `glab auth status --hostname` finds a login for. */
+  glabHosts: string[]
+  /** What `glab api` gives for the merge requests of a branch. */
+  mrs: string
+  /** What `glab api` gives for one merge request, by `iid`. */
+  mrViews: Record<number, object>
+  /** What `glab api` gives for the merge requests of a commit, by its hash; none unless this names it. */
+  commitMrs: Record<string, object[]>
 }
+
+/** A merge request as the GitLab API gives it. */
+const mergeRequest = (iid: number, state: string) => ({
+  iid,
+  state,
+  title: 'CSV export',
+  source_branch: 'host-change',
+  web_url: `https://gitlab.example.com/o/r/-/merge_requests/${iid}`,
+})
 
 // The engine hands a hook the path as the host resolves it (`C:\repo\...` on Windows).
 const norm = (path: string): string =>
@@ -119,6 +138,11 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     prViews: {},
     remote: 'https://github.com/o/r.git',
     ghHosts: ['github.com'],
+    isGlabMissing: false,
+    glabHosts: ['gitlab.com'],
+    mrs: JSON.stringify([mergeRequest(12, 'opened')]),
+    mrViews: {},
+    commitMrs: {},
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -209,6 +233,29 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     const login = /^gh auth status --hostname ([\w.-]+)$/.exec(command)
     if (login) {
       return state.ghHosts.includes(login[1] ?? '') ? ran('') : ran('', 1, `You are not logged into any accounts on ${login[1]}`)
+    }
+    if (e.argv[0] === 'glab' && state.isGlabMissing) {
+      return { deny: 'spawn glab ENOENT' }
+    }
+    if (command === 'glab --version') {
+      return ran('glab 1.80.0 (2026-09-01)\n')
+    }
+    const glabLogin = /^glab auth status --hostname ([\w.-]+)$/.exec(command)
+    if (glabLogin) {
+      return state.glabHosts.includes(glabLogin[1] ?? '') ? ran('') : ran('', 1, `x ${glabLogin[1]} has not been authenticated with glab.`)
+    }
+    if (/^glab api projects\/:id\/merge_requests\?source_branch=[^&\s]+&order_by=created_at&sort=desc&per_page=1$/.test(command)) {
+      return ran(state.mrs)
+    }
+    const mrView = /^glab api projects\/:id\/merge_requests\/(\d+)$/.exec(command)
+    if (mrView) {
+      const found = state.mrViews[Number(mrView[1])]
+
+      return found === undefined ? ran('', 1, 'glab: 404 Not Found') : ran(JSON.stringify(found))
+    }
+    const commitMrs = /^glab api projects\/:id\/repository\/commits\/([0-9a-f]{40})\/merge_requests$/.exec(command)
+    if (commitMrs) {
+      return ran(JSON.stringify(state.commitMrs[commitMrs[1] ?? ''] ?? []))
     }
     if (command === 'git remote get-url origin') {
       return state.remote === undefined ? ran('', 2, "error: No such remote 'origin'") : ran(`${state.remote}\n`)
@@ -1442,8 +1489,107 @@ describe('opsx-board and the host of the pull request', () => {
     return { clock, state, ui: await $.ui.mount({ ...PANE, surface: 'terminal' }) }
   }
 
-  test('a repository on GitLab: no PR stage, and the apply run ends with its tasks', async ($, on) => {
+  const why = async (ui: Awaited<ReturnType<typeof applied>>['ui']) => (await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text
+
+  test('a repository on GitLab: the MR stage from glab, with the words of GitLab', async ($, on) => {
+    on('tool.call', { tool: 'Bash' }, () => ({ result: 'https://gitlab.example.com/o/r/-/merge_requests/12' }))
     const { clock, state, ui } = await applied($, on, 'git@gitlab.example.com:o/r.git', world => {
+      world.mrs = '[]'
+    })
+    // No merge request yet: the apply run goes on to it, so Next waits.
+    expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  MR › ○  Archive')
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await ui.press({ key: 'pr' })
+    expect(state.toasts.at(-1)).toBe('No merge request for this branch yet')
+
+    // `glab mr create` opens it, and the board reads it at once.
+    state.mrs = JSON.stringify([mergeRequest(12, 'opened')])
+    await $.tool.call({ tool: 'Bash', command: 'glab mr create --fill --yes' })
+    await clock.advance(300)
+    expect(state.runs).toContain('glab api projects/:id/merge_requests?source_branch=host-change&order_by=created_at&sort=desc&per_page=1')
+    expect(state.toasts).toContain('Merge request !12 open')
+    expect((await ui.find(RAIL))?.text).toContain('✔  MR')
+    expect((await ui.find({ key: 'pr' }))?.text).toContain('MR      !12 open · open in the browser ↗')
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive host-change')
+    expect(await why(ui)).toBe('fills the prompt · the merge request is open')
+    expect((await ui.find({ type: 'Text', text: /^click a row/ }))?.text).toContain('design, MR → browser')
+    await ui.press({ key: 'pr' })
+    expect(state.runs.at(-1)).toBe('xdg-open https://gitlab.example.com/o/r/-/merge_requests/12')
+    expect(state.toasts.at(-1)).toBe('Opened merge request !12')
+    // gh is installed, but the board asks it nothing about a GitLab repository.
+    expect(ghRuns(state)).toEqual([])
+    await ui.unmount()
+  })
+
+  test('a GitHub repository keeps the words of GitHub', async ($, on) => {
+    const { clock, ui } = await applied($, on, 'https://github.com/o/r.git')
+    await $.command.run(typed('opsx-board', ''))
+    await clock.advance(300)
+    expect((await ui.find(RAIL))?.text).toContain('✔  PR')
+    expect((await ui.find({ key: 'pr' }))?.text).toContain('PR      #227 open · open in the browser ↗')
+    expect(await why(ui)).toBe('fills the prompt · the pull request is open')
+    expect((await ui.find({ type: 'Text', text: /^click a row/ }))?.text).toContain('design, PR → browser')
+    await ui.unmount()
+  })
+
+  test('an archived change on GitLab finds the merge request that merged it, by its archive commit', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'main')
+    state.remote = 'https://gitlab.com/o/r.git'
+    // GitLab relates the commit to the merge request that merged it, and to an older one closed unmerged.
+    state.commitMrs[ARCHIVE_HASH] = [mergeRequest(30, 'closed'), mergeRequest(31, 'merged')]
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('opsx-board', 'csv-import'))
+    await clock.advance(300)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  MR › ✔  Archive')
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!31 merged')
+    expect(state.runs).toContain(`glab api projects/:id/repository/commits/${ARCHIVE_HASH}/merge_requests`)
+    // The `(#226)` of the commit subject is a GitHub number: on GitLab, gh reads nothing.
+    expect(state.runs.filter(run => run.startsWith('gh '))).toEqual([])
+    await board.unmount()
+  })
+
+  test('a change archived on its branch reads its open merge request again until the merge', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'demo-change')
+    state.remote = 'git@gitlab.com:o/r.git'
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    // The work on the branch makes the merge request due once a minute.
+    await clock.advance(65_000)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!12 open')
+
+    archive(state, CWD, '2026-10-22-demo-change')
+    await clock.advance(4500)
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!12 open')
+    state.mrViews[12] = mergeRequest(12, 'merged')
+    await clock.advance(65_000)
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!12 merged')
+    expect(state.runs).toContain('glab api projects/:id/merge_requests/12')
+    await board.unmount()
+  })
+
+  test('a GitLab server with a name of its own: the MR stage, once glab is logged in to it', async ($, on) => {
+    const { clock, state, ui } = await applied($, on, 'https://code.corp.example/group/sub/r.git', world => {
+      world.glabHosts = ['gitlab.com', 'code.corp.example']
+    })
+    await $.command.run(typed('opsx-board', ''))
+    await clock.advance(300)
+    expect((await ui.find({ key: 'pr' }))?.text).toContain('!12 open')
+    // gh is asked first, then glab, each once for the session.
+    await clock.advance(65_000)
+    expect(state.runs.filter(run => run.endsWith('auth status --hostname code.corp.example'))).toEqual([
+      'gh auth status --hostname code.corp.example',
+      'glab auth status --hostname code.corp.example',
+    ])
+    await ui.unmount()
+  })
+
+  test('a repository on GitLab without glab: no MR stage, and the apply run ends with its tasks', async ($, on) => {
+    const { clock, state, ui } = await applied($, on, 'git@gitlab.example.com:o/r.git', world => {
+      world.isGlabMissing = true
       world.prs = '[]'
     })
     expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  Archive')
@@ -1473,7 +1619,7 @@ describe('opsx-board and the host of the pull request', () => {
     await ui.unmount()
   })
 
-  test('a repository without a remote, or on a host gh is not logged in to: no PR stage', async ($, on) => {
+  test('a repository without a remote, or on a host neither gh nor glab is logged in to: no PR stage', async ($, on) => {
     const { clock, state, ui } = await applied($, on, undefined)
     expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  Archive')
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify host-change')
@@ -1482,8 +1628,9 @@ describe('opsx-board and the host of the pull request', () => {
     state.remote = 'https://git.other.example/o/r.git'
     await clock.advance(35_000)
     expect(state.runs).toContain('gh auth status --hostname git.other.example')
+    expect(state.runs).toContain('glab auth status --hostname git.other.example')
     expect(await ui.find({ key: 'pr' })).toBeUndefined()
-    expect(state.runs.filter(run => run.startsWith('gh pr '))).toEqual([])
+    expect(state.runs.filter(run => run.startsWith('gh pr ') || run.startsWith('glab api '))).toEqual([])
     await ui.unmount()
   })
 })
