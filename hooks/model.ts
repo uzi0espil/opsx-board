@@ -232,9 +232,11 @@ export const stagesOf = (
   }
 
   // The apply run goes on to the pull request, and is over once the tasks are settled and
-  // the pull request is open. Without gh there is no PR stage: the tasks alone decide.
+  // the pull request is open. Without a pull request to read (no gh, or a repository that is
+  // not on GitHub) there is no PR stage: the tasks alone decide.
   const hasPr = snap?.pr !== undefined
-  const isApplyOpen = !isTasksSettled(groups) || (snap?.isGhMissing !== true && !hasPr && !isArchived)
+  const isPrRead = snap?.prHost !== 'none'
+  const isApplyOpen = !isTasksSettled(groups) || (isPrRead && !hasPr && !isArchived)
   const applyRunning =
     isApplyRun(live, snap) ||
     agents.some(agent => agent.phase === 'apply' && isRunning(agent)) ||
@@ -278,9 +280,9 @@ export const stagesOf = (
     isRunning: reviewRunning || isCommandRunning('verify') || isAgentRunning('verify', 'review'),
   }
 
-  // Without gh the board cannot see a pull request, so it shows no PR stage.
+  // Without a pull request to read, the board shows no PR stage.
   const pr: Stage | undefined =
-    snap?.isGhMissing === true && !hasPr
+    !isPrRead && !hasPr
       ? undefined
       : {
           key: 'pr',
@@ -455,7 +457,7 @@ export const nextStep = (snap: Snapshot | null, stages: readonly Stage[], live: 
   if (byKey('propose')?.state === 'active') {
     return { text: `/opsx:apply ${change}`, why: `all artifacts are written. Apply when their review is over${pending}` }
   }
-  // Without a PR stage (no gh), the change goes from its tasks to verify, then to the archive.
+  // Without a PR stage, the change goes from its tasks to verify, then to the archive.
   const prStage = byKey('pr')
   if (!isTasksSettled(snap.groups) || (prStage !== undefined && prStage.state !== 'done')) {
     const isStopped = live.command?.name === 'opsx:apply' && (live.stoppedAt ?? 0) >= live.command.at

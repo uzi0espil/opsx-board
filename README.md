@@ -44,7 +44,7 @@ flowchart LR
 ```
 
 The dashed stages come from a [`board.yaml`](#add-stages-with-boardyaml). The PR stage needs
-`gh`.
+`gh` and a repository on GitHub.
 
 The board watches; it does not steer. It reads the `openspec` CLI, the files of the change, git,
 `gh`, and the events of your session: commands, agents, and tokens. It redraws as they change,
@@ -57,7 +57,7 @@ pane. It follows the session into a worktree and out of it.
 ## Install
 
 You need Claude Code and the `openspec` CLI on the `PATH`. `gh` is optional: without it, the board
-shows no PR stage and no GitHub issue state.
+shows no PR stage and no GitHub issue state. A repository that is not on GitHub has no PR stage.
 
 In Claude Code 2.1.275 or later:
 

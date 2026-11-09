@@ -154,6 +154,12 @@ export type Commit = {
 /** `closes`: the issues the pull request closes, when the hints ask for them. */
 export type PullRequest = { number: number; state: string; url: string; closes?: IssueRef[] }
 
+/**
+ * The host whose pull requests the board reads: `github` with `gh`. `none` when it reads none:
+ * the repository's `origin` remote is not on GitHub, or `gh` is not installed.
+ */
+export type PrHost = 'github' | 'none'
+
 export type Snapshot = {
   change: string
   /** The repository root the session reads (its working directory). */
@@ -178,8 +184,11 @@ export type Snapshot = {
   designs: DesignView[]
   commits: Commit[]
   pr?: PullRequest
-  /** True when `gh` is not installed: the board shows no PR stage and no GitHub issue state. */
-  isGhMissing?: boolean
+  /**
+   * The host whose pull requests the board reads; with `none`, the board shows no PR stage.
+   * Optional: a snapshot written before this field existed survives a hot reload.
+   */
+  prHost?: PrHost
   refreshedAt: number
   warnings: string[]
 }

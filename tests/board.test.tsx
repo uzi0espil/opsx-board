@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
 
 import {
   ARCH_REVIEW_MD,
@@ -77,6 +78,10 @@ type World = {
   archiveLogs: Record<string, string>
   /** What `gh pr view <N>` gives, by number; #226 is merged unless this names it. */
   prViews: Record<number, object>
+  /** The URL of the `origin` remote; undefined for a repository without one. */
+  remote: string | undefined
+  /** The hosts `gh auth status --hostname` finds a login for. */
+  ghHosts: string[]
 }
 
 // The engine hands a hook the path as the host resolves it (`C:\repo\...` on Windows).
@@ -112,6 +117,8 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     archiveLog: `${ARCHIVE_HASH}\tfeat(import): CSV import of a library (WI-7) (#226) [skip ci]\n`,
     archiveLogs: {},
     prViews: {},
+    remote: 'https://github.com/o/r.git',
+    ghHosts: ['github.com'],
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -198,6 +205,13 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     }
     if (command === 'gh --version') {
       return ran('gh version 2.101.0 (2026-09-15)\n')
+    }
+    const login = /^gh auth status --hostname ([\w.-]+)$/.exec(command)
+    if (login) {
+      return state.ghHosts.includes(login[1] ?? '') ? ran('') : ran('', 1, `You are not logged into any accounts on ${login[1]}`)
+    }
+    if (command === 'git remote get-url origin') {
+      return state.remote === undefined ? ran('', 2, "error: No such remote 'origin'") : ran(`${state.remote}\n`)
     }
     // gh resolves a bare number to the repository of the working directory, here o/r.
     const issue = /^gh issue view (\d+) --json ([\w,]+)(?: -R ([\w./-]+))?$/.exec(command)
@@ -1390,6 +1404,86 @@ describe('opsx-board with GitHub issues', () => {
     await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
     expect(await ui.find({ key: 'group:1' })).toBeUndefined()
+    await ui.unmount()
+  })
+})
+
+describe('opsx-board and the host of the pull request', () => {
+  const HOSTED = `${CWD}/openspec/changes/host-change`
+  const HOSTED_FILES: Record<string, string> = {
+    [`${HOSTED}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-10-31\n',
+    [`${HOSTED}/proposal.md`]: '## Why\n',
+    [`${HOSTED}/tasks.md`]: '## 1. Build\n\n- [x] 1.1 Build the writer\n',
+  }
+  const HOSTED_STATUS = {
+    ...SPEC_DRIVEN_STATUS_JSON,
+    changeName: 'host-change',
+    isComplete: true,
+    artifacts: SPEC_DRIVEN_STATUS_JSON.artifacts.map(artifact => ({ id: artifact.id, outputPath: artifact.outputPath, requires: artifact.requires, status: 'done' })),
+  }
+  const RAIL = { type: 'Text', text: /Explore .* Archive/ } as const
+  const ghRuns = (state: World) => state.runs.filter(run => run.startsWith('gh pr ') || run.startsWith('gh auth '))
+
+  /** A session of host-change on its branch, whose apply run has settled every task. */
+  async function applied($: Parameters<TestBody>[0], on: On, remote: string | undefined, setup: (state: World) => void = () => undefined) {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 31, 20) })
+    const state = world(on, HOSTED_FILES, 'host-change')
+    state.status = { 'host-change': HOSTED_STATUS }
+    state.remote = remote
+    setup(state)
+    on('command.run', () => ({ text: '' }))
+    on('turn.complete', () => ({ text: '' }))
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('opsx:apply', 'host-change'))
+    await $.turn.complete({ answer: 'All tasks are done.', durationMs: 1, isAborted: false, turnId: 't-a', reason: 'answer' })
+    await clock.advance(300)
+
+    return { clock, state, ui: await $.ui.mount({ ...PANE, surface: 'terminal' }) }
+  }
+
+  test('a repository on GitLab: no PR stage, and the apply run ends with its tasks', async ($, on) => {
+    const { clock, state, ui } = await applied($, on, 'git@gitlab.example.com:o/r.git', world => {
+      world.prs = '[]'
+    })
+    expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  Archive')
+    expect(await ui.find({ key: 'pr' })).toBeUndefined()
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify host-change')
+    // gh is installed, but the board asks it nothing about a GitLab repository.
+    expect(ghRuns(state)).toEqual([])
+
+    // The same change on GitHub: the apply run goes on to the pull request, so Next waits.
+    state.remote = 'https://github.com/o/r.git'
+    await clock.advance(35_000)
+    expect((await ui.find(RAIL))?.text).toContain('○  PR')
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a GitHub Enterprise server with a name of its own: the PR stage, once gh is logged in to it', async ($, on) => {
+    const { clock, state, ui } = await applied($, on, 'ssh://git@git.corp.example:2222/o/r.git', world => {
+      world.ghHosts = ['github.com', 'git.corp.example']
+    })
+    await $.command.run(typed('opsx-board', ''))
+    await clock.advance(300)
+    expect((await ui.find({ key: 'pr' }))?.text).toContain('#227 open')
+    // Asked once for the session, not at each read of git.
+    await clock.advance(65_000)
+    expect(state.runs.filter(run => run === 'gh auth status --hostname git.corp.example')).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('a repository without a remote, or on a host gh is not logged in to: no PR stage', async ($, on) => {
+    const { clock, state, ui } = await applied($, on, undefined)
+    expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  Archive')
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify host-change')
+
+    // A remote added later is read with git.
+    state.remote = 'https://git.other.example/o/r.git'
+    await clock.advance(35_000)
+    expect(state.runs).toContain('gh auth status --hostname git.other.example')
+    expect(await ui.find({ key: 'pr' })).toBeUndefined()
+    expect(state.runs.filter(run => run.startsWith('gh pr '))).toEqual([])
     await ui.unmount()
   })
 })

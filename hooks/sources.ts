@@ -2,9 +2,21 @@
 // board.yaml hints, the files the hints name, git, and gh. Every read goes through `$`.
 import type { EngineInterface } from 'claude-code'
 
-import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
-import { GITHUB_WARNING, closingRefs, collectIssues, hasGh } from './github'
-import { classifyCommits, findMarker, parseCreated, parseDecisions, parseJson, parsePlanning, parseTasks, parseVisualDesign, readVerdict } from './parse'
+import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PrHost, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
+import { GITHUB_WARNING, closingRefs, collectIssues, hasGh, isGhHost } from './github'
+import {
+  classifyCommits,
+  findMarker,
+  hostKind,
+  parseCreated,
+  parseDecisions,
+  parseJson,
+  parsePlanning,
+  parseTasks,
+  parseVisualDesign,
+  readVerdict,
+  remoteHost,
+} from './parse'
 import { defaultHints, inRequiresOrder, isSafeId, isSafePath, isSchemaName, readHints, readSchema, schemaNameOf } from './schema'
 import type { SchemaInfo } from './schema'
 import { YamlError } from './yaml'
@@ -473,11 +485,27 @@ async function viewPullRequest($: Engine, cwd: string, number: number): Promise<
   }
 }
 
+/**
+ * The host whose pull requests the board reads, from the `origin` remote: GitHub for a host
+ * whose name tells GitHub, or for another host that `gh` is logged in to. None without `gh`,
+ * without a remote, or for a host of another kind, such as GitLab.
+ */
+async function readPrHost($: Engine, cwd: string, now: number): Promise<PrHost> {
+  const ran = await run($, ['git', 'remote', 'get-url', 'origin'], cwd)
+  const host = ran?.exitCode === 0 ? remoteHost(ran.stdout) : undefined
+  const kind = host === undefined ? undefined : hostKind(host)
+  if (host === undefined || kind === 'gitlab' || !(await hasGh($, cwd, now))) {
+    return 'none'
+  }
+
+  return kind === 'github' || (await isGhHost($, cwd, host)) ? 'github' : 'none'
+}
+
 export type GitOptions = { isGitDue: boolean; isPrDue: boolean; hints: BoardHints; archivedAs?: string; now: number }
 
 /**
- * The branch, the change's commits, and its pull request; what is not due comes from
- * `previous`. Without `gh` there is no pull request to read.
+ * The branch, the change's commits, the host of its pull request, and the pull request; what is
+ * not due comes from `previous`. Without a host to read, there is no pull request.
  */
 export async function collectGit(
   $: Engine,
@@ -485,7 +513,7 @@ export async function collectGit(
   change: string,
   previous: Snapshot | null,
   options: GitOptions,
-): Promise<Pick<Snapshot, 'branch' | 'commits' | 'pr' | 'isGhMissing'>> {
+): Promise<Pick<Snapshot, 'branch' | 'commits' | 'pr' | 'prHost'>> {
   const { isGitDue, isPrDue, hints, archivedAs, now } = options
   let branch = previous?.branch
   let commits = previous?.commits ?? []
@@ -494,21 +522,22 @@ export async function collectGit(
     const log = await run($, ['git', 'log', '-n', '400', '--format=%h%x09%s'], cwd)
     commits = log?.exitCode === 0 ? classifyCommits(log.stdout, change, hints.commits) : commits
   }
+  // Read with git, so the PR stage hides from the first snapshot on, and a remote added later shows.
+  const prHost = isGitDue || previous?.prHost === undefined ? await readPrHost($, cwd, now) : previous.prHost
+  const isPrRead = prHost !== 'none'
   let pr = previous?.pr
-  // Asked once per session (see hasGh), so the PR stage hides from the first snapshot on.
-  const isGhMissing = !(await hasGh($, cwd, now))
-  if (isGhMissing !== true && archivedAs === undefined && isPrDue && branch !== undefined) {
+  if (isPrRead && archivedAs === undefined && isPrDue && branch !== undefined) {
     pr = (await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)) ?? pr
   }
-  if (isGhMissing !== true && archivedAs !== undefined && pr === undefined && isGitDue) {
+  if (isPrRead && archivedAs !== undefined && pr === undefined && isGitDue) {
     pr = await mergedPullRequest($, cwd, archivedAs, branch)
-  } else if (isGhMissing !== true && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
+  } else if (isPrRead && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
     // The change was archived on its branch before the merge: read the pull request until it closes.
     const viewed = await viewPullRequest($, cwd, pr.number)
     pr = viewed === undefined ? pr : { ...pr, ...viewed }
   }
 
-  return { branch, commits, pr, isGhMissing }
+  return { branch, commits, pr, prHost }
 }
 
 /**
@@ -716,7 +745,7 @@ export async function collectSnapshot(
     designs,
     commits,
     pr,
-    isGhMissing: git.isGhMissing,
+    prHost: git.prHost,
     refreshedAt: options.now,
     warnings: [...warnings, ...hints.warnings, ...work.warnings],
   }
