@@ -26,8 +26,10 @@ The stages come from OpenSpec:
   host, the board shows no PR stage. An archived change finds the pull request that its squash
   commit names. In a checkout of the change's own branch, it finds the pull request of the
   branch whose commits hold the archive commit. On GitLab, it finds the merge request that
-  GitLab relates to the archive commit. While that pull request is open, the board reads it
-  again once a minute, until it is merged or closed.
+  GitLab relates to the archive commit. A change archived on the main branch after its merge,
+  such as by a CI job, finds the merge request of the last commit that changed its active
+  folder. While that pull request is open, the board reads it again once a minute, until it is
+  merged or closed.
 
 ## Add stages with board.yaml
 

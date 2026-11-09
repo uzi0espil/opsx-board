@@ -92,6 +92,8 @@ type World = {
   mrViews: Record<number, object>
   /** What `glab api` gives for the merge requests of a commit, by its hash; none unless this names it. */
   commitMrs: Record<string, object[]>
+  /** The last commit that added or changed a file of a change's active folder, by the change's name. */
+  activeLogs: Record<string, string>
 }
 
 /** A merge request as the GitLab API gives it. */
@@ -143,6 +145,7 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     mrs: JSON.stringify([mergeRequest(12, 'opened')]),
     mrViews: {},
     commitMrs: {},
+    activeLogs: {},
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -256,6 +259,10 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     const commitMrs = /^glab api projects\/:id\/repository\/commits\/([0-9a-f]{40})\/merge_requests$/.exec(command)
     if (commitMrs) {
       return ran(JSON.stringify(state.commitMrs[commitMrs[1] ?? ''] ?? []))
+    }
+    const changed = /^git log -1 --diff-filter=AM --format=%H -- openspec\/changes\/([\w-]+)$/.exec(command)
+    if (changed) {
+      return ran(state.activeLogs[changed[1] ?? ''] ?? '')
     }
     if (command === 'git remote get-url origin') {
       return state.remote === undefined ? ran('', 2, "error: No such remote 'origin'") : ran(`${state.remote}\n`)
@@ -1548,6 +1555,27 @@ describe('opsx-board and the host of the pull request', () => {
     expect(state.runs).toContain(`glab api projects/:id/repository/commits/${ARCHIVE_HASH}/merge_requests`)
     // The `(#226)` of the commit subject is a GitHub number: on GitLab, gh reads nothing.
     expect(state.runs.filter(run => run.startsWith('gh '))).toEqual([])
+    await board.unmount()
+  })
+
+  test('a change archived on the main branch by a CI job: the merge request of its last change to the active folder', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'main')
+    const squash = 'e7f447c8adf8e610ff5553df5682488854e004d3'
+    state.remote = 'https://gitlab.com/o/r.git'
+    // The archive commit was pushed to main, so no merge request holds it. The squash commit of
+    // the merge request last changed the active folder.
+    state.archiveLog = `${ARCHIVE_HASH}\tchore(openspec): archive completed changes [skip ci]\n`
+    state.activeLogs['csv-import'] = `${squash}\n`
+    state.commitMrs[squash] = [mergeRequest(330, 'merged')]
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    await $.command.run(typed('opsx-board', 'csv-import'))
+    await clock.advance(300)
+    const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!330 merged')
+    expect(state.runs).toContain(`glab api projects/:id/repository/commits/${ARCHIVE_HASH}/merge_requests`)
+    expect(state.runs).toContain(`glab api projects/:id/repository/commits/${squash}/merge_requests`)
     await board.unmount()
   })
 

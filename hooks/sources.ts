@@ -459,11 +459,15 @@ async function branchPullRequest($: Engine, cwd: string, branch: string, hash: s
  * folder names it as `(#N)`, and `gh` gives that pull request's URL. In a checkout of the
  * change's own branch, the commit that added the folder has no number: the pull request of
  * the branch counts when its commits hold that commit. GitLab relates a commit to its merge
- * requests itself, so on GitLab the commit alone finds the merge request.
+ * requests itself, so on GitLab a commit finds the merge request: the archive commit when the
+ * merge request archived the change. A change archived on the main branch after its merge, such
+ * as by a CI job, has an archive commit of no merge request. Then the last commit that added or
+ * changed a file of its active folder finds the merge request that merged the change.
  */
 async function mergedPullRequest(
   $: Engine,
   cwd: string,
+  change: string,
   archivedAs: string,
   branch: string | undefined,
   host: PrHost,
@@ -472,7 +476,13 @@ async function mergedPullRequest(
   const log = await run($, ['git', 'log', '-1', '--diff-filter=A', '--format=%H%x09%s', '--', path], cwd)
   const [hash = '', subject = ''] = (log?.exitCode === 0 ? log.stdout.trim() : '').split('\t')
   if (host === 'gitlab') {
-    return commitMergeRequest($, cwd, hash)
+    const archiving = await commitMergeRequest($, cwd, hash)
+    if (archiving !== undefined) {
+      return archiving
+    }
+    const last = await run($, ['git', 'log', '-1', '--diff-filter=AM', '--format=%H', '--', `openspec/changes/${change}`], cwd)
+
+    return commitMergeRequest($, cwd, last?.exitCode === 0 ? last.stdout.trim() : '')
   }
   // The last `(#N)` of the subject; a `[skip ci]` may follow it.
   const number = [...subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
@@ -551,7 +561,7 @@ export async function collectGit(
     pr = found ?? pr
   }
   if (isPrRead && archivedAs !== undefined && pr === undefined && isGitDue) {
-    pr = await mergedPullRequest($, cwd, archivedAs, branch, prHost)
+    pr = await mergedPullRequest($, cwd, change, archivedAs, branch, prHost)
   } else if (isPrRead && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
     // The change was archived on its branch before the merge: read the pull request until it closes.
     const viewed = isGitlab ? await viewMergeRequest($, cwd, pr.number) : await viewPullRequest($, cwd, pr.number)
