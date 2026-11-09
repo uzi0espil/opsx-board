@@ -21,8 +21,8 @@ with any OpenSpec schema.
 An OpenSpec change runs over many commands, agents, and sessions. The chat shows the last turn,
 not where the change stands. The board keeps that in view:
 
-- **The whole lifecycle at a glance.** Explore, Propose, Apply, Verify, PR, and Archive, with the
-  stage in progress marked.
+- **The whole lifecycle at a glance.** Explore, Propose, Apply, Verify, PR (MR on GitLab), and
+  Archive, with the stage in progress marked.
 - **Live apply progress.** A progress bar of the tasks, and each task group with the agent that
   runs it, its tokens, and its commit.
 - **The next step, ready to send.** Next fills the prompt with the next `/opsx:` command. You
@@ -44,11 +44,11 @@ flowchart LR
 ```
 
 The dashed stages come from a [`board.yaml`](#add-stages-with-boardyaml). The PR stage needs
-`gh` and a repository on GitHub.
+`gh` for a repository on GitHub, or `glab` for one on GitLab, where it is the MR stage.
 
 The board watches; it does not steer. It reads the `openspec` CLI, the files of the change, git,
-`gh`, and the events of your session: commands, agents, and tokens. It redraws as they change,
-and it changes no file of the workflow.
+`gh`, `glab`, and the events of your session: commands, agents, and tokens. It redraws as they
+change, and it changes no file of the workflow.
 
 Each session follows its own change: the argument of its last `/opsx:` command, else the only
 active change in its folder, else the change its branch names, else the one you pick in the
@@ -56,8 +56,9 @@ pane. It follows the session into a worktree and out of it.
 
 ## Install
 
-You need Claude Code and the `openspec` CLI on the `PATH`. `gh` is optional: without it, the board
-shows no PR stage and no GitHub issue state. A repository that is not on GitHub has no PR stage.
+You need Claude Code and the `openspec` CLI on the `PATH`. `gh` and `glab` are optional.
+Without the CLI of the repository's host, `gh` for GitHub or `glab` for GitLab, the board shows
+no PR stage. Without `gh`, GitHub issues show no state.
 
 In Claude Code 2.1.275 or later:
 
@@ -86,8 +87,8 @@ the stage.
 | `/opsx-board close` | Closes the pane |
 
 Every row acts on a click: a section folds, an artifact opens in the pane, an agent opens its
-session (`← Main session` brings you back), the PR opens in the browser, and Next fills the
-prompt. See [Clicks](docs/board.md#clicks).
+session (`← Main session` brings you back), the PR or MR opens in the browser, and Next fills
+the prompt. See [Clicks](docs/board.md#clicks).
 
 During `/opsx:apply`, the board asks the agents to report the task they work on, so the pane
 marks the exact task in progress. Turn this off with **Progress report tool** in `/config`.
@@ -115,8 +116,8 @@ take work items from backlog files, and read the verdict of a review artifact. S
 
 ## What it touches
 
-- **Reads** the repository of the session, through the `openspec` CLI, git, and `gh`, and its own
-  folder, `~/.claude/opsx-board/`.
+- **Reads** the repository of the session, through the `openspec` CLI, git, `gh`, and `glab`, and
+  its own folder, `~/.claude/opsx-board/`.
 - **Writes** only its token ledgers, under `~/.claude/opsx-board/`.
 - **Runs no workflow command.** Next fills the prompt; you decide to send it.
 - **Checks a `board.yaml` strictly**, because it comes with a repository: built-in providers

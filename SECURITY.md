@@ -19,8 +19,8 @@ The plugin runs inside the Claude Code session of the person who installs it. In
   ledgers of the person's other sessions of the same project. It copies the person's ledgers
   from `~/.claude/opsx-board/ledgers/`, where versions up to 0.2.0 kept them, and leaves a
   `MOVED.txt` there;
-- runs `openspec`, `git`, and `gh` in the session's working directory. On Windows, `openspec`
-  runs through `cmd /c`;
+- runs `openspec`, `git`, `gh`, and `glab` in the session's working directory. On Windows,
+  `openspec` runs through `cmd /c`. Of the GitLab API, `glab api` makes GET requests only;
 - opens a URL, or a file of a listed type (HTML, PDF, image, Markdown, text, YAML, JSON), with
   the operating system's opener, when the person clicks it in the pane;
 - registers a tool that agents call to report their task. The tool only updates the pane;
@@ -40,4 +40,4 @@ A repository, a change, or a `board.yaml` that makes the plugin:
 
 ## Out of scope
 
-A vulnerability of Claude Code, OpenSpec, `gh`, or `git` itself. Report it to that project.
+A vulnerability of Claude Code, OpenSpec, `gh`, `glab`, or `git` itself. Report it to that project.

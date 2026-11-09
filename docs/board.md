@@ -87,7 +87,7 @@ Every row acts on a click:
 | Agent | Opens its session |
 | `← Main session` | Shows the main session again. It appears under the stage chip, and in the reader, only while an agent's session is in view. The hotkey `m` presses it while the pane holds the keyboard |
 | Review (Verify), verify | Shows the last report of the review agent, else of `/opsx:verify`, in the reader |
-| PR | Opens the pull request in the browser (an archived change finds the PR that merged it) |
+| PR, or MR on GitLab | Opens the pull request, or the merge request, in the browser (an archived change finds the one that merged it) |
 | Next | Fills the prompt with the next command. It never runs the command. The pane hides it while a stage is in progress, see [Next](#next) |
 
 ## The reader
@@ -123,7 +123,8 @@ last workflow command of the session. It stops in two cases:
 - A main turn ends by an interrupt, an error, or a refusal. The next main turn resumes the run,
   such as the person's next prompt or the notification of a background agent.
 
-During an apply run, the pane hides Next until no task is `[ ]` and the pull request exists.
+During an apply run, the pane hides Next until no task is `[ ]` and the pull request (on GitLab,
+the merge request) exists.
 Then Next offers `/opsx:archive`. A task left `[~]` for the owner does not hold the archive back.
 While an apply run is stopped and none of its agents runs, Next offers `/opsx:apply` again.
 
@@ -140,8 +141,9 @@ runs:
 Explore, Design, and Propose `in review` are active, but no work runs in them after the turn of
 their command. Then Next offers the step that ends them.
 
-Without `gh`, or in a repository that is not on GitHub, the board cannot see a pull request. It
-shows no PR stage, and when no task is `[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
+Without the CLI of the repository's host, `gh` for GitHub or `glab` for GitLab, or in a repository
+on another host, the board cannot see a pull request. It shows no PR stage, and when no task is
+`[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
 
 ## Progress report tool
 
@@ -178,5 +180,5 @@ old folder can be deleted by hand once no session of an older version runs.
 ## What the board reads
 
 The plugin observes the workflow. It reads the `openspec` CLI JSON, the schema and its hints,
-the change files, the files the hints name, git, and `gh`, and the session's own agent and token
-events. It changes no workflow file.
+the change files, the files the hints name, git, `gh`, and `glab`, and the session's own agent
+and token events. It changes no workflow file.

@@ -25,7 +25,7 @@ import type {
 } from '../types'
 import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf, zeroUsage } from './ledger'
 import type { GroupView, Stage, StageState } from './model'
-import { currentStage, exploreRunsOf, groupViews, isExploring, isRunning, isViewInReview, isViewOpen, nextStep, stageText, stagesOf } from './model'
+import { currentStage, exploreRunsOf, groupViews, isExploring, isRunning, isViewInReview, isViewOpen, nextStep, prWords, stageText, stagesOf } from './model'
 import { formatDuration, formatTokens, reflowTables } from './parse'
 
 type Engine = EngineInterface
@@ -759,9 +759,10 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           ),
         ])
 
-  // Review and verify open their last report in the reader; the PR opens in the browser.
+  // Review and verify open their last report in the reader; the PR or MR opens in the browser.
   const review = stageOf('verify')
   const pr = stageOf('pr')
+  const words = prWords(snap.prHost)
   const archive = stageOf('archive')
   const fixCommit = snap.commits.find(commit => commit.kind === 'review-fix')
   const shipRow = (key: string | undefined, stage: Stage, note: string | undefined, onPress?: () => void) => {
@@ -796,7 +797,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           'review',
           review,
           review.note ??
-            (fixCommit ? `fixes ${fixCommit.hash}` : reviewer === undefined ? '/opsx:verify checks the change against its artifacts' : `${reviewer} runs before the pull request`),
+            (fixCommit ? `fixes ${fixCommit.hash}` : reviewer === undefined ? '/opsx:verify checks the change against its artifacts' : `${reviewer} runs before the ${words.name}`),
           () =>
             stageReport === undefined
               ? $.ui.toast(`No ${reviewer ?? 'verify'} report in this session yet`)
@@ -817,8 +818,8 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       ? null
       : shipRow('pr', pr, snap.pr === undefined ? pr.note : `${pr.note ?? ''} · open in the browser ↗`, () =>
           snap.pr === undefined
-            ? $.ui.toast('No pull request for this branch yet')
-            : void actions.openExternal(snap.pr.url, `pull request #${snap.pr.number}`),
+            ? $.ui.toast(`No ${words.name} for this branch yet`)
+            : void actions.openExternal(snap.pr.url, `${words.name} ${words.ref(snap.pr.number)}`),
         ),
     archive === undefined ? null : shipRow(undefined, archive, archive.note),
   ])
@@ -842,7 +843,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       {nextCard}
       <Box paddingX={1} marginTop={1}>
         <Text dimColor italic wrap="truncate-end">
-          click a row · artifact, work item → reader · design, PR → browser · group → its tasks · agent → its session · task → full text
+          {`click a row · artifact, work item → reader · design, ${words.label} → browser · group → its tasks · agent → its session · task → full text`}
         </Text>
       </Box>
     </Box>

@@ -11,7 +11,7 @@ Issues and pull requests are welcome.
 
 ## Set up
 
-You need Claude Code, git, and the `openspec` CLI. `gh` is optional.
+You need Claude Code, git, and the `openspec` CLI. `gh` and `glab` are optional.
 
 Load the plugin from your clone and run the checks:
 
@@ -28,7 +28,8 @@ effect in the next session.
 
 The tests need no login. They use the `board.yaml` of a demo project. Other tests cover a plain
 `spec-driven` change, an archived change of a forked schema, GitHub issues with and without
-`gh`, tasks from `apply.tracks`, a session that leaves a worktree, and the `reportTool` setting.
+`gh`, GitLab merge requests with and without `glab`, tasks from `apply.tracks`, a session that
+leaves a worktree, and the `reportTool` setting.
 
 CI runs both checks on Ubuntu and Windows for each pull request, and each week on the newest
 Claude Code.
