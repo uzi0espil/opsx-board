@@ -123,27 +123,49 @@ last workflow command of the session. It stops in two cases:
 - A main turn ends by an interrupt, an error, or a refusal. The next main turn resumes the run,
   such as the person's next prompt or the notification of a background agent.
 
-During an apply run, the pane hides Next until no task is `[ ]` and the pull request (on GitLab,
-the merge request) exists.
-Then Next offers `/opsx:archive`. A task left `[~]` for the owner does not hold the archive back.
-While an apply run is stopped and none of its agents runs, Next offers `/opsx:apply` again.
+Apply is done when every task is `[x]`. Tasks can stay open: some wait for the owner, some
+come after the merge, and a change can be archived with them. An archived change with open tasks
+shows Apply as partly done (`◐`) with its count, and the change is still finished.
+
+Before its first task is done, an apply run is in progress for its whole length. Once a task is
+done, it is in progress only while its command, one of its agents, or a main turn of the run
+works. When none works, Next goes on to the next stage, and it does not offer `/opsx:apply`
+again. After an interrupt or an error, Next offers `/opsx:apply` until the next main turn.
 
 ## Next
 
-Next offers nothing while a stage is in progress. A stage is in progress while one of these
-runs:
+Next offers nothing while a stage is in progress, and nothing for an archived change. Only the
+archive finishes a change: a merged pull request does not, and the header shows `archived` also
+when a `board.yaml` hides the Archive stage. A stage is in progress while one of these runs:
 
 - The main turn of its command, such as `/opsx:propose`, `/opsx:verify`, or the design command.
-- An apply run, for the Apply stage.
+- The apply run, for the Apply stage, see [Apply run](#apply-run).
 - An agent that the session started in that stage. An interrupt does not stop a background agent.
 - The review agent of the hints, for Verify, or the agent of the Plan stage.
 
 Explore, Design, and Propose `in review` are active, but no work runs in them after the turn of
 their command. Then Next offers the step that ends them.
 
-Without the CLI of the repository's host, `gh` for GitHub or `glab` for GitLab, or in a repository
-on another host, the board cannot see a pull request. It shows no PR stage, and when no task is
-`[ ]`, Next offers `/opsx:verify`, then `/opsx:archive`.
+Otherwise Next offers the step of the first stage of the flow that has one. Each stage says when
+it has one:
+
+| Stage | Next |
+|-------|------|
+| Design | the design command, while a blocked design holds the proposal back |
+| Propose | `/opsx:propose` without a change folder, a revision while a verdict blocks the change, and `/opsx:continue` while artifacts remain |
+| Apply | `/opsx:apply` once the artifacts are written, after a refusal, while no task is done, and after an interrupt |
+| Verify | `/opsx:verify` once Apply has started and stopped, until the change is verified |
+| Archive | `/opsx:archive`, with the tasks it leaves open in its reason |
+
+Next skips a stage that a `board.yaml` hides or makes optional.
+
+The PR stage only shows the pull request: none yet (`○`), open and in review (`▶`), merged
+(`✔`), or closed (`–`). A team may open it before, during, or after Apply, and archive before or
+after it, so it never holds Next back. An open pull request counts as a review that happened, so
+Verify shows done. Without the CLI of the repository's host, `gh` for GitHub or `glab` for
+GitLab, or in a repository on another host, the board cannot see a pull request, and it shows no
+PR stage. A change merged into the main branch and not archived finds the pull request of the
+last commit that changed its folder.
 
 ## Progress report tool
 

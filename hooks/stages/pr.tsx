@@ -8,22 +8,29 @@ import type { PaneContext, Stage, StageContext, StageKind } from './base'
 export const prStage: StageKind = {
   key: 'pr',
 
-  /** Done once the pull request is open, or the change is archived. */
+  /**
+   * The pull request as it stands: none yet, open (in review), merged, or closed without the merge.
+   * It shows only: a pull request may come before, during, or after Apply, and before or after
+   * the archive, so it never holds Next back, and only the archive finishes a change.
+   */
   evaluate(ctx: StageContext): Stage | undefined {
     const { snap } = ctx
-    const hasPr = snap?.pr !== undefined
+    const pr = snap?.pr
     // Without a pull request to read, the board shows no PR stage.
-    if (snap?.prHost === 'none' && !hasPr) {
+    if (snap?.prHost === 'none' && pr === undefined) {
       return undefined
     }
     const words = prWords(snap?.prHost)
+    const isOpen = pr?.state === 'OPEN'
 
     return {
       key: 'pr',
       label: words.label,
       isOptional: false,
-      state: hasPr || ctx.isArchived ? 'done' : 'pending',
-      note: snap?.pr === undefined ? undefined : `${words.ref(snap.pr.number)} ${snap.pr.state.toLowerCase()}`,
+      state: pr === undefined ? (ctx.isArchived ? 'na' : 'pending') : isOpen ? 'active' : pr.state === 'MERGED' ? 'done' : 'na',
+      note: pr === undefined ? undefined : `${words.ref(pr.number)} ${pr.state.toLowerCase()}`,
+      isInReview: isOpen,
+      isInfo: true,
     }
   },
 

@@ -31,7 +31,8 @@ not where the change stands. The board keeps that in view:
   issue in the pane.
 - **What a change costs.** Tokens per stage, added up over every session of the change.
 - **Your schema, your stages.** The board takes the stages from your OpenSpec schema. A
-  `board.yaml` adds a Plan stage of backlog items or GitHub issues, and a Design stage.
+  `board.yaml` adds a Plan stage of backlog items or GitHub issues, and a Design stage, and it
+  can rename, hide, move, or make optional any stage of the flow.
 
 ## How it works
 

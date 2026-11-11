@@ -196,6 +196,40 @@ commits:
     }
   })
 
+  test('stage entries rename, hide, move, and make optional the stages of the flow', async () => {
+    const hints = readHints(
+      'spec-driven',
+      `version: 1
+stages:
+  - { id: plan, label: Issues, collects: work-item, section: Issues, before: explore }
+  - { id: verify, label: Review, optional: true }
+  - { id: pr, hidden: true }
+  - { id: explore, after: apply }
+`,
+      '/repo/board.yaml',
+    )
+    expect(hints.warnings).toEqual([])
+    expect(hints.flow).toEqual([
+      { key: 'plan', label: 'Issues' },
+      { key: 'design' },
+      { key: 'propose' },
+      { key: 'apply' },
+      { key: 'explore' },
+      { key: 'verify', label: 'Review', isOptional: true },
+      { key: 'pr', isHidden: true },
+      { key: 'archive' },
+    ])
+
+    // An entry without collects must name a stage of the board, and its keys are checked.
+    const odd = readHints('odd', `stages:\n  - { id: qa }\n  - { id: archive, hidden: 'no', before: shipping }\n`, '/repo/board.yaml')
+    expect(odd.warnings).toEqual([
+      'stages[0]: "qa" is no stage of the board; a new stage needs collects',
+      'stages[1]: hidden must be true or false',
+      'stages[1]: before "shipping" is no stage of the board',
+    ])
+    expect(odd.flow?.map(setting => setting.key)).toEqual(['explore', 'plan', 'design', 'propose', 'apply', 'verify', 'pr', 'archive'])
+  })
+
   test('a file the reader refuses gives no hints and one warning', async () => {
     const hints = readHints('broken', 'stages: [\n', '/repo/board.yaml')
     expect(hints.plan).toBeUndefined()

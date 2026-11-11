@@ -118,6 +118,15 @@ export type VerdictHints = {
 /** Commit subject patterns; `{change}` stands for the change name. */
 export type CommitHints = { artifacts?: string; task?: string; reviewFix?: string; archive?: string }
 
+/** A stage of the board: the stages of OpenSpec, and the Plan and Design stages a board.yaml adds. */
+export type StageKey = 'plan' | 'explore' | 'design' | 'propose' | 'apply' | 'verify' | 'pr' | 'archive'
+
+/**
+ * A stage of the flow as board.yaml sets it. `label` renames it. A hidden stage leaves the rail,
+ * the pane, and Next. Next skips an optional stage, and a pending one shows as not applicable.
+ */
+export type StageSetting = { key: StageKey; label?: string; isHidden?: boolean; isOptional?: boolean }
+
 /**
  * What a board.yaml adds to an OpenSpec schema, after its check. Patterns stay strings, so
  * the value can live in the session state.
@@ -135,6 +144,11 @@ export type BoardHints = {
   reviewAgent?: string
   findings?: string
   skipReportAgents: string[]
+  /**
+   * Every stage of the board in the order of the flow, with what board.yaml sets for it.
+   * Optional: hints written before this field existed survive a hot reload, in the default order.
+   */
+  flow?: StageSetting[]
   warnings: string[]
 }
 
@@ -258,6 +272,9 @@ export type Live = {
   validateAt?: number
   /** When a main turn ended by an interrupt, an error, or a refusal. The next main turn clears it. */
   stoppedAt?: number
+  /** When the last main turn started and ended: a turn runs while it has not ended. Optional for older state. */
+  turnAt?: number
+  turnEndedAt?: number
   reviewCounts?: Record<string, number>
   reviewAt?: number
   reviewReport?: string
