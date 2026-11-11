@@ -519,8 +519,8 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       : section('plan', plan?.label ?? 'Plan', plan?.state, plan?.state === 'active', null, () => [
           ...snap.planning.map(item => {
             const mark = item.mark ?? '?'
-            // A GitHub issue that the proposal does not name says where the board found it.
-            const via = item.issue?.via === 'branch' ? ' · branch' : item.issue?.via === 'pr' ? ' · closed by the PR' : ''
+            // An item that the proposal does not name says where the board found it.
+            const via = item.via === 'branch' ? ' · branch' : item.via === 'pr' ? ' · closed by the PR' : ''
 
             return (
               <Button key={`plan:${item.id}`} plain onPress={() => void actions.readPlanning(item)}>

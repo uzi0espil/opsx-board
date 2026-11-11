@@ -6,14 +6,11 @@ import {
   classifyCommits,
   countFindings,
   designFromArgs,
-  findMarker,
   hostKind,
   inferGroup,
   isChangeName,
-  itemBlock,
   parseCreated,
   parseDecisions,
-  parsePlanning,
   parseTasks,
   parseVerifyVerdict,
   parseVisualDesign,
@@ -23,6 +20,8 @@ import {
   remoteHost,
   tableCells,
 } from '../hooks/parse'
+import { planItems } from '../hooks/providers'
+import { findMarker, itemBlock } from '../hooks/providers/file'
 import { readHints } from '../hooks/schema'
 import { wrapWords } from '../hooks/view'
 import {
@@ -40,7 +39,7 @@ import {
 } from './fixtures'
 
 const HINTS = readHints('gated-spec-driven', DEMO_BOARD_YAML, '/repo/openspec/schemas/gated-spec-driven/board.yaml')
-const PLAN = HINTS.plan ?? { label: 'Plan', section: 'Planning Items', isBeforeExplore: true, sources: [] }
+const PLAN = HINTS.plan ?? { label: 'Plan', section: 'Planning Items', isBeforeExplore: true, refs: [] }
 const DESIGN = HINTS.design ?? { label: 'Design', section: 'Visual Design', skipArgs: [], path: 'x', dir: 'x' }
 const VERDICT = HINTS.verdicts['arch-review'] ?? { values: [], block: [], warn: [], notes: [] }
 
@@ -78,22 +77,24 @@ describe('parse', () => {
   })
 
   test('planning items and their live markers', async () => {
-    const { items, none } = parsePlanning(PROPOSAL_MD, PLAN)
+    const { items, none } = planItems(PROPOSAL_MD, PLAN)
     expect(none).toBeUndefined()
     expect(items).toEqual([
       {
         id: 'WI-12',
         title: 'CSV export of the library',
+        provider: 'file',
+        via: 'proposal',
         file: 'docs/backlog.md',
         mark: '~',
       },
     ])
     expect(findMarker(BACKLOG_MD, 'WI-12')).toBe('~')
     expect(findMarker(BACKLOG_MD, 'WI-13')).toBeUndefined()
-    expect(parsePlanning('## Planning Items\n\nNone — Tech Debt (P2)\n', PLAN).none).toBe('Tech Debt (P2)')
+    expect(planItems('## Planning Items\n\nNone — Tech Debt (P2)\n', PLAN).none).toBe('Tech Debt (P2)')
     // A BUG item belongs to the bugs file; an item outside the section does not count.
-    const debt = parsePlanning('## Backlog Items\n\n- [ ] **BUG-68 · Spec drift**\n\n## Impact\n\n- [ ] **WI-9 · Later**\n', PLAN)
-    expect(debt.items).toEqual([{ id: 'BUG-68', title: 'Spec drift', file: 'docs/bugs.md', mark: ' ' }])
+    const debt = planItems('## Backlog Items\n\n- [ ] **BUG-68 · Spec drift**\n\n## Impact\n\n- [ ] **WI-9 · Later**\n', PLAN)
+    expect(debt.items).toEqual([{ id: 'BUG-68', title: 'Spec drift', provider: 'file', via: 'proposal', file: 'docs/bugs.md', mark: ' ' }])
     const nested = '- [~] **WI-1 · Parent** — x\n  - [ ] **WI-2 · Child** — y\n    - note\n\n- [ ] **WI-3 · Next** — z\n'
     expect(itemBlock(nested, 'WI-1')).toBe('- [~] **WI-1 · Parent** — x\n  - [ ] **WI-2 · Child** — y\n    - note')
     expect(itemBlock(nested, 'WI-2')).toBe('  - [ ] **WI-2 · Child** — y\n    - note')

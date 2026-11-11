@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { closingRefs, ghError, issueMark, repoOfUrl } from '../hooks/github'
-import { issueFromBranch, issueRefs, parsePlanning } from '../hooks/parse'
+import { closingRefs, ghError, repoOfUrl } from '../hooks/github'
+import { planItems } from '../hooks/providers'
+import { issueFromBranch, issueMark, issueRefs } from '../hooks/providers/github'
 import { readHints } from '../hooks/schema'
 import { GITHUB_PRS, GITHUB_PROPOSAL_MD } from './fixtures'
 
@@ -31,13 +32,13 @@ describe('GitHub issues', () => {
   })
 
   test('the issues of the proposal section, with the text beside each as its first title', async () => {
-    const hints = { label: 'Issues', section: 'Issues', isBeforeExplore: false, sources: [], github: { isPrClosing: true } }
-    expect(parsePlanning(GITHUB_PROPOSAL_MD, hints).items).toEqual([
-      { id: '#12', title: 'CSV export', issue: { number: 12, via: 'proposal' } },
-      { id: 'other/lib#7', title: 'Needs the upstream fix', issue: { repo: 'other/lib', number: 7, via: 'proposal' } },
+    const hints = { label: 'Issues', section: 'Issues', isBeforeExplore: false, refs: [{ provider: 'github' as const, isPrClosing: true }] }
+    expect(planItems(GITHUB_PROPOSAL_MD, hints).items).toEqual([
+      { id: '#12', title: 'CSV export', provider: 'github', via: 'proposal', issue: { number: 12 } },
+      { id: 'other/lib#7', title: 'Needs the upstream fix', provider: 'github', via: 'proposal', issue: { repo: 'other/lib', number: 7 } },
     ])
-    // Without a GitHub source, the same section names no work item.
-    expect(parsePlanning(GITHUB_PROPOSAL_MD, { ...hints, github: undefined }).items).toEqual([])
+    // Without a GitHub ref, the same section names no work item.
+    expect(planItems(GITHUB_PROPOSAL_MD, { ...hints, refs: [] }).items).toEqual([])
   })
 
   test('what gh gives: the issues a pull request closes, an issue state, and an error', async () => {
@@ -75,12 +76,12 @@ refs:
 `,
       '/home/me/board.yaml',
     )
-    expect(hints.plan?.github).toEqual({ repo: 'o/r', branch: '^(\\d+)-', isPrClosing: false })
+    expect(hints.plan?.refs).toEqual([{ provider: 'github', repo: 'o/r', branch: '^(\\d+)-', isPrClosing: false }])
     expect(hints.warnings).toEqual(['refs[1]: only the first github reference counts', 'refs[2]: provider "github" gives work items only'])
 
     // A repository that is not owner/name never reaches gh -R.
     const bad = readHints('spec-driven', `stages: [{ collects: work-item, section: Issues }]\nrefs: [{ kind: work-item, provider: github, repo: 'o/r -R x', pr: yes }]\n`, '/b.yaml')
-    expect(bad.plan?.github).toBeUndefined()
+    expect(bad.plan?.refs).toEqual([])
     expect(bad.warnings).toEqual(['refs[0]: repo "o/r -R x" is not owner/name'])
   })
 })

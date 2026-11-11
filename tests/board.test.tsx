@@ -1561,19 +1561,19 @@ describe('opsx-board and the host of the pull request', () => {
   test('a change archived on the main branch by a CI job: the merge request of its last change to the active folder', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES, 'main')
-    const squash = 'e7f447c8adf8e610ff5553df5682488854e004d3'
+    const squash = '5c0a5c0a5c0a5c0a5c0a5c0a5c0a5c0a5c0a5c0a'
     state.remote = 'https://gitlab.com/o/r.git'
     // The archive commit was pushed to main, so no merge request holds it. The squash commit of
     // the merge request last changed the active folder.
     state.archiveLog = `${ARCHIVE_HASH}\tchore(openspec): archive completed changes [skip ci]\n`
     state.activeLogs['csv-import'] = `${squash}\n`
-    state.commitMrs[squash] = [mergeRequest(330, 'merged')]
+    state.commitMrs[squash] = [mergeRequest(42, 'merged')]
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await clock.advance(300)
     await $.command.run(typed('opsx-board', 'csv-import'))
     await clock.advance(300)
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await board.find({ key: 'pr' }))?.text).toContain('!330 merged')
+    expect((await board.find({ key: 'pr' }))?.text).toContain('!42 merged')
     expect(state.runs).toContain(`glab api projects/:id/repository/commits/${ARCHIVE_HASH}/merge_requests`)
     expect(state.runs).toContain(`glab api projects/:id/repository/commits/${squash}/merge_requests`)
     await board.unmount()

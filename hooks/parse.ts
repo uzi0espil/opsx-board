@@ -7,15 +7,12 @@ import type {
   CommitHints,
   CommitKind,
   DesignHints,
-  IssueRef,
   Phase,
-  PlanHints,
-  PlanningItem,
   TaskGroup,
   Verdict,
   VerdictHints,
 } from '../types'
-import { hintRegex, isRepoName, isSafeId, sectionHeading } from './schema'
+import { hintRegex, isSafeId, sectionHeading } from './check'
 
 // The checkbox pattern of the OpenSpec CLI (dist/utils/task-progress.js).
 // Only `x` / `X` counts as done; `[~]`, `[-]` and `[ ]` do not.
@@ -24,12 +21,12 @@ const GROUP = /^##\s+(\d+)\.\s+(.*?)\s*$/
 const TASK_ID = /^(\d+(?:\.\d+)+)\s+/
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/
 
-const lines = (text: string): string[] => text.split(/\r?\n/)
+export const lines = (text: string): string[] => text.split(/\r?\n/)
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
 
 /** The lines under the first `## ` heading that matches, up to the next `## ` heading. */
-const section = (md: string, heading: RegExp): string[] | undefined => {
+export const section = (md: string, heading: RegExp): string[] | undefined => {
   const all = lines(md)
   const at = all.findIndex(line => heading.test(line))
   if (at < 0) {
@@ -109,138 +106,11 @@ export const readVerdict = (md: string, artifact: string, hints: VerdictHints): 
   return { artifact, value: known, level, note, next: level === 'block' ? hints.next : undefined }
 }
 
-// ── GitHub issues ───────────────────────────────────────────────────────────
-
-const REPO = '[A-Za-z0-9][A-Za-z0-9-]{0,38}/[\\w.-]{1,100}'
-const ISSUE_URL = new RegExp(`https://github\\.com/(${REPO})/issues/(\\d{1,9})(?![\\w/])`, 'g')
-// `#12` or `owner/name#12`, not inside a word, a path, a heading, an anchor such as
-// `#12-notes`, or an HTML entity.
-const ISSUE_REF = new RegExp(`(?<![\\w/#&.-])(?:(${REPO}))?#(\\d{1,9})(?![\\w-])`, 'g')
-
-// A number after "PR" or "pull request" names a pull request, not an issue.
-const AFTER_PULL_REQUEST = /\b(?:PRs?|pull requests?|MRs?|merge requests?)\s*$/i
 // A list item: a bullet, a checkbox item, or a numbered item.
 const LIST_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+/
 
-/** The id the board shows for an issue: `#12`, or `owner/name#12` for another repository. */
-export const issueId = (ref: IssueRef): string => `${ref.repo ?? ''}#${ref.number}`
-
-/**
- * The GitHub issues a line names, in their order: issue URLs, `owner/name#12`, and `#12`. A
- * number after "PR" or "pull request" does not count.
- */
-export const issueRefs = (text: string): IssueRef[] => {
-  const found: { at: number; ref: IssueRef }[] = []
-  const rest = text.replace(ISSUE_URL, (match, repo: string, number: string, at: number) => {
-    found.push({ at, ref: { repo, number: Number(number) } })
-
-    return ' '.repeat(match.length)
-  })
-  for (const match of rest.matchAll(ISSUE_REF)) {
-    const repo = match[1]
-    const at = match.index ?? 0
-    if ((repo === undefined || isRepoName(repo)) && !AFTER_PULL_REQUEST.test(rest.slice(Math.max(0, at - 24), at))) {
-      found.push({ at, ref: { repo, number: Number(match[2]) } })
-    }
-  }
-  const seen = new Set<string>()
-
-  return found
-    .sort((a, b) => a.at - b.at)
-    .map(item => item.ref)
-    .filter(ref => ref.number > 0 && !seen.has(issueId(ref)) && seen.add(issueId(ref)) !== undefined)
-}
-
-/** The issue number a branch name holds, by the branch pattern of the hints: its first group. */
-export const issueFromBranch = (branch: string | undefined, pattern: string | undefined): number | undefined => {
-  const digits = branch === undefined || pattern === undefined ? undefined : hintRegex(pattern, '')?.exec(branch)?.[1]
-
-  return digits !== undefined && /^\d{1,9}$/.test(digits) && Number(digits) > 0 ? Number(digits) : undefined
-}
-
-/** What a line says beside the one issue it names: its text without the list marker, the reference, and bold marks. */
-const issueTitle = (line: string, refs: number): string =>
-  refs !== 1
-    ? ''
-    : line
-        .replace(ISSUE_URL, '')
-        .replace(ISSUE_REF, '')
-        .replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s*(?:\[[^\]]?\]\s*)?/, '')
-        .replace(/\*\*|__/g, '')
-        .replace(/^[\s·—–:-]+|[\s·—–:-]+$/g, '')
-        .slice(0, 120)
-
-/**
- * The work items a proposal names in its planning section: each checkbox line whose bold text
- * starts with an ID of one of the sources, and a `None — <reason>` line. With a GitHub source,
- * each other list item gives the issues it names; their state comes from `gh` later. Prose
- * lines name no issue: they mention pull requests and earlier work.
- */
-export const parsePlanning = (md: string, hints: PlanHints): { items: PlanningItem[]; none?: string } => {
-  const body = section(md, sectionHeading(hints.section))
-  const items: PlanningItem[] = []
-  let none: string | undefined
-  const sources = hints.sources.flatMap(source => {
-    const pattern = hintRegex(`^\\s*- \\[([ xX~!])\\]\\s+\\*\\*(${source.pattern})\\s*(?:·\\s*)?([^*]*)\\*\\*`, '')
-
-    return pattern === undefined ? [] : [{ source, pattern }]
-  })
-  const issues = new Set<string>()
-  for (const line of body ?? []) {
-    const found = sources.map(({ source, pattern }) => ({ source, item: pattern.exec(line) })).find(match => match.item)
-    if (found?.item) {
-      const groups = found.item.length
-      items.push({
-        id: found.item[2] ?? '',
-        // The title is the last group: the ID pattern may hold groups of its own.
-        title: (found.item[groups - 1] ?? '').trim(),
-        file: found.source.file,
-        mark: (found.item[1] ?? ' ').toLowerCase(),
-      })
-      continue
-    }
-    const empty = /^None\s*[—–-]\s*(.*)$/.exec(line.trim())
-    if (empty) {
-      none = empty[1] ?? ''
-      continue
-    }
-    const refs = hints.github === undefined || !LIST_LINE.test(line) ? [] : issueRefs(line)
-    for (const ref of refs.filter(item => !issues.has(issueId(item)))) {
-      issues.add(issueId(ref))
-      items.push({ id: issueId(ref), title: issueTitle(line, refs.length), issue: { ...ref, via: 'proposal' } })
-    }
-  }
-
-  return { items, none }
-}
-
-/** The live marker of a work item's checkbox line in the file that holds it. */
-export const findMarker = (md: string, id: string): string | undefined => {
-  const pattern = new RegExp(`^\\s*- \\[([ xX~!])\\]\\s+\\*\\*${escape(id)}\\b`, 'm')
-
-  return pattern.exec(md)?.[1]?.toLowerCase()
-}
-
-/** A work item's checkbox line and the lines nested under it, for the reader. */
-export const itemBlock = (md: string, id: string): string | undefined => {
-  const all = lines(md)
-  const head = new RegExp(`^(\\s*)- \\[[ xX~!]\\]\\s+\\*\\*${escape(id)}\\b`)
-  const at = all.findIndex(line => head.test(line))
-  if (at < 0) {
-    return undefined
-  }
-  const indent = head.exec(all[at] ?? '')?.[1]?.length ?? 0
-  const block = [all[at] ?? '']
-  for (const line of all.slice(at + 1)) {
-    const own = /^(\s*)/.exec(line)?.[1]?.length ?? 0
-    if (line.trim() !== '' && (own <= indent || /^#{1,6}\s/.test(line))) {
-      break
-    }
-    block.push(line)
-  }
-
-  return block.join('\n').trimEnd()
-}
+/** Whether a line is a list item. A prose line names no work item: it mentions pull requests and earlier work. */
+export const isListLine = (line: string): boolean => LIST_LINE.test(line)
 
 export type DesignRow = { label: string; view?: string; statusText: string; isNeedsDesign: boolean }
 

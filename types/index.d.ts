@@ -33,27 +33,35 @@ export type Verdict = { artifact: string; value: string; level: 'ok' | 'warn' | 
 /** A GitHub issue reference: `repo` is `owner/name`, absent for the repository of the working directory. */
 export type IssueRef = { repo?: string; number: number }
 
-/** Where the board found a GitHub issue: the proposal section, the branch name, or the pull request that closes it. */
-export type IssueVia = 'proposal' | 'branch' | 'pr'
+/** Where the board found a work item: the proposal section, the branch name, or the pull request that closes it. */
+export type ItemVia = 'proposal' | 'branch' | 'pr'
 
+/**
+ * A work item of the Plan stage, as its provider found it. `mark` is its state as a checkbox
+ * mark, absent when the provider cannot tell. The other fields belong to one provider each.
+ */
 export type PlanningItem = {
   id: string
   title: string
-  /** The file that holds the item, relative to the repository root. */
-  file?: string
+  /** The provider that found the item. Optional: an item written before this field existed survives a hot reload. */
+  provider?: WorkItemRef['provider']
+  via?: ItemVia
   mark?: string
-  /** A GitHub issue: its reference, where the board found it, and what `gh` gave. */
-  issue?: IssueRef & { via: IssueVia; url?: string; state?: string }
+  /** The `file` provider: the file that holds the item, relative to the repository root. */
+  file?: string
+  /** The `github` provider: the issue, and what `gh` gave. */
+  issue?: IssueRef & { url?: string; state?: string }
 }
 
-/** A work-item reference that a `file` provider resolves: an ID pattern and the file that holds the items. */
-export type WorkItemSource = { pattern: string; file: string; history?: string }
+/** A `file` ref: an ID pattern, the file that holds the items, and the file they move to once resolved. */
+export type FileRef = { provider: 'file'; pattern: string; file: string; history?: string }
 
 /**
- * The GitHub issues of a change, which `gh` reads: those the proposal section names, the one
- * the branch name names, and those the pull request closes.
+ * A `github` ref: the GitHub issues of a change, which `gh` reads: those the proposal section
+ * names, the one the branch name names, and those the pull request closes.
  */
-export type GithubSource = {
+export type GithubRef = {
+  provider: 'github'
   /** `owner/name`: the repository of a bare `#N`. Else the one `gh` resolves from the working directory. */
   repo?: string
   /** A pattern whose first group is an issue number in the branch name. */
@@ -62,6 +70,9 @@ export type GithubSource = {
   isPrClosing: boolean
 }
 
+/** A `work-item` ref of board.yaml, after its provider checked it. A provider adds its own ref type here. */
+export type WorkItemRef = FileRef | GithubRef
+
 export type PlanHints = {
   label: string
   /** The proposal section that lists the items. */
@@ -69,8 +80,8 @@ export type PlanHints = {
   /** A running agent of this type marks the stage active. */
   agent?: string
   isBeforeExplore: boolean
-  sources: WorkItemSource[]
-  github?: GithubSource
+  /** The work-item refs, in the order of board.yaml. */
+  refs: WorkItemRef[]
 }
 
 export type DesignHints = {

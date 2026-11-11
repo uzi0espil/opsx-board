@@ -34,6 +34,22 @@ leaves a worktree, and the `reportTool` setting.
 CI runs both checks on Ubuntu and Windows for each pull request, and each week on the newest
 Claude Code.
 
+## Add a work-item provider
+
+A work-item provider gives the items of the Plan stage, such as GitHub issues. Each one is a
+module in `hooks/providers/` that fills in `WorkItemProvider` of `hooks/providers/base.ts`:
+
+- `ref` checks the keys of its `work-item` ref in a `board.yaml`. It names no command.
+- `itemsOfLine` finds the items a line of the proposal section names: its ID pattern.
+- `files` names the repository files whose edits change its items.
+- `collect` reads each item's state, and the items it finds beyond the proposal.
+- `open` says what a click shows: a text in the reader, or a page in the browser.
+
+Add its ref type to `WorkItemRef` in `types/index.d.ts` and the provider to `PROVIDERS` in
+`hooks/providers/index.ts`. Nothing else names a provider. A provider never takes `$`: it gets
+`Io`, which reads a file and runs a command by argv (`hooks/io.ts`). The engine follows `$`
+only through calls it can resolve, and a provider is called through an object.
+
 ## Pull requests
 
 - One change per pull request.

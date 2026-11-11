@@ -2,22 +2,23 @@
 // board.yaml hints, the files the hints name, git, gh, and glab. Every read goes through `$`.
 import type { EngineInterface } from 'claude-code'
 
-import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PlanHints, PlanningItem, PrHost, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
-import { GITHUB_WARNING, closingRefs, collectIssues, hasGh, isGhHost } from './github'
+import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PrHost, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
+import { closingRefs, hasGh, isGhHost } from './github'
+import { ioOf } from './io'
 import { branchMergeRequest, commitMergeRequest, hasGlab, isGlabHost, viewMergeRequest } from './gitlab'
 import {
   classifyCommits,
-  findMarker,
   hostKind,
   parseCreated,
   parseDecisions,
   parseJson,
-  parsePlanning,
   parseTasks,
   parseVisualDesign,
   readVerdict,
   remoteHost,
 } from './parse'
+import { collectPlan, planFiles, planItems } from './providers'
+import { isPrClosing } from './providers/github'
 import { defaultHints, inRequiresOrder, isSafeId, isSafePath, isSchemaName, readHints, readSchema, schemaNameOf } from './schema'
 import type { SchemaInfo } from './schema'
 import { YamlError } from './yaml'
@@ -287,7 +288,7 @@ export async function signature(
           .flatMap(view => [design.decisions, design.open].flatMap(file => (file === undefined ? [] : [`${cwd}/${designDir(design, view)}/${file}`])))
   const user = hints === null ? undefined : await userHintsPath($, hints.schema)
   const parts = await Promise.all([
-    ...(hints?.plan?.sources ?? []).map(source => mtime($, `${cwd}/${source.file}`)),
+    ...planFiles(hints?.plan).map(file => mtime($, `${cwd}/${file}`)),
     ...designFiles.map(path => mtime($, path)),
     ...[hints?.file, user].map(path => (path === undefined ? '-' : mtime($, path))),
   ])
@@ -363,31 +364,6 @@ export async function collectDesigns(
   }
 
   return [...views.values()]
-}
-
-/** The live marker of each item in the file that holds it; an item gone from the file but in its history is resolved. */
-async function collectPlanning($: Engine, cwd: string, items: readonly PlanningItem[], hints: PlanHints): Promise<PlanningItem[]> {
-  const texts = new Map<string, string | undefined>()
-  const textOf = async (file: string | undefined) => {
-    if (file === undefined) {
-      return undefined
-    }
-    if (!texts.has(file)) {
-      texts.set(file, await readText($, `${cwd}/${file}`))
-    }
-
-    return texts.get(file)
-  }
-  const planning: PlanningItem[] = []
-  for (const item of items) {
-    const source = hints.sources.find(candidate => candidate.file === item.file)
-    const live = findMarker((await textOf(item.file)) ?? '', item.id)
-    const history = live === undefined ? await textOf(source?.history) : undefined
-    const isResolved = history !== undefined && findMarker(history, item.id) !== undefined
-    planning.push({ ...item, mark: isResolved ? 'x' : live })
-  }
-
-  return planning
 }
 
 /** The verdict of each review artifact that the hints name and the change holds. */
@@ -519,11 +495,11 @@ async function readPrHost($: Engine, cwd: string, now: number): Promise<PrHost> 
   }
   const kind = hostKind(host)
   if (kind !== undefined) {
-    const isInstalled = kind === 'github' ? await hasGh($, cwd, now) : await hasGlab($, cwd, now)
+    const isInstalled = kind === 'github' ? await hasGh(ioOf($), cwd, now) : await hasGlab($, cwd, now)
 
     return isInstalled ? kind : 'none'
   }
-  if ((await hasGh($, cwd, now)) && (await isGhHost($, cwd, host))) {
+  if ((await hasGh(ioOf($), cwd, now)) && (await isGhHost(ioOf($), cwd, host))) {
     return 'github'
   }
 
@@ -557,7 +533,7 @@ export async function collectGit(
   const isGitlab = prHost === 'gitlab'
   let pr = previous?.pr
   if (isPrRead && archivedAs === undefined && isPrDue && branch !== undefined) {
-    const found = isGitlab ? await branchMergeRequest($, cwd, branch) : await fetchPullRequest($, cwd, branch, hints.plan?.github?.isPrClosing === true)
+    const found = isGitlab ? await branchMergeRequest($, cwd, branch) : await fetchPullRequest($, cwd, branch, isPrClosing(hints.plan))
     pr = found ?? pr
   }
   if (isPrRead && archivedAs !== undefined && pr === undefined && isGitDue) {
@@ -570,31 +546,6 @@ export async function collectGit(
 
   return { branch, commits, pr, prHost }
 }
-
-/**
- * The work items of a change: those of the files first, then its GitHub issues. `proposal`
- * holds the issues the proposal names.
- */
-export async function collectWorkItems(
-  $: Engine,
-  cwd: string,
-  fileItems: readonly PlanningItem[],
-  proposal: readonly PlanningItem[],
-  git: Pick<Snapshot, 'branch' | 'pr'>,
-  hints: PlanHints,
-  now: number,
-): Promise<{ items: PlanningItem[]; warnings: string[] }> {
-  const files = await collectPlanning($, cwd, fileItems, hints)
-  if (hints.github === undefined) {
-    return { items: files, warnings: [] }
-  }
-  const issues = await collectIssues($, cwd, hints.github, proposal, git.branch, git.pr, now)
-
-  return { items: [...files, ...issues.items], warnings: issues.warnings }
-}
-
-/** The warnings of a snapshot without those of the GitHub provider, which a refresh replaces. */
-export const withoutGithubWarnings = (warnings: readonly string[]): string[] => warnings.filter(warning => !warning.startsWith(GITHUB_WARNING))
 
 // ── the tracked tasks ───────────────────────────────────────────────────────
 
@@ -739,19 +690,11 @@ export async function collectSnapshot(
   })
   const { branch, commits, pr } = git
 
-  const parsedPlanning = proposal === undefined || hints.plan === undefined ? { items: [] } : parsePlanning(proposal, hints.plan)
+  const parsedPlanning = proposal === undefined || hints.plan === undefined ? { items: [] } : planItems(proposal, hints.plan)
   const work =
     hints.plan === undefined
       ? { items: [], warnings: [] }
-      : await collectWorkItems(
-          $,
-          cwd,
-          parsedPlanning.items.filter(item => item.issue === undefined),
-          parsedPlanning.items.filter(item => item.issue !== undefined),
-          git,
-          hints.plan,
-          options.now,
-        )
+      : await collectPlan($, parsedPlanning.items, hints.plan, { cwd, branch, pr, now: options.now })
   const planning = work.items
   const designs = await collectDesigns($, cwd, proposal, options.runs, hints.design)
   const verdicts = await collectVerdicts($, dir, artifacts, hints)

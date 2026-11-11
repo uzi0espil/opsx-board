@@ -47,11 +47,10 @@ import {
   inferGroup,
   isChangeName,
   isTracked,
-  itemBlock,
   parseVerifyVerdict,
   phaseOfCommand,
 } from './parse'
-import { collectIssues, issueDoc, repoOfUrl } from './github'
+import { openItem, planFiles, refreshPlan } from './providers'
 import {
   collectDesigns,
   collectGit,
@@ -63,7 +62,6 @@ import {
   projectSchema,
   readFile,
   signature,
-  withoutGithubWarnings,
 } from './sources'
 import { PANE, renderPane, renderReader } from './view'
 
@@ -828,7 +826,7 @@ async function noteToolUse($: Engine, input: { tool: string; command?: string; f
   // The files of the hints: the work-item files, and the design folders up to their id.
   const watched = [
     'openspec/',
-    ...(hints?.plan?.sources.flatMap(source => [source.file, source.history ?? source.file]) ?? []),
+    ...planFiles(hints?.plan),
     ...(hints?.design === undefined ? [] : [hints.design.dir.replace(/\{id\}.*$/, '')]),
   ]
   if (watched.some(part => part !== '' && path.includes(part))) {
@@ -976,8 +974,8 @@ async function showBoard($: Engine, from: string | undefined): Promise<void> {
 
 /**
  * The branch, the commits, and the pull request of a snapshot whose files did not change, and
- * its GitHub issues, which the branch and the pull request may name. The issues keep their
- * cache time, so this asks `gh` only for a stale one.
+ * the work items of the providers that read git: the branch and the pull request may name
+ * others. A provider keeps its own cache, so a GitHub issue asks `gh` again only when stale.
  */
 async function refreshGit(
   $: Engine,
@@ -989,45 +987,23 @@ async function refreshGit(
   now: number,
 ): Promise<Snapshot> {
   const git = await collectGit($, dir, previous.change, previous, { isGitDue, isPrDue, hints, archivedAs: previous.archivedAs, now })
-  const github = hints.plan?.github
-  if (github === undefined) {
-    return { ...previous, ...git, refreshedAt: now }
-  }
-  const files = previous.planning.filter(item => item.issue === undefined)
-  const proposal = previous.planning.filter(item => item.issue?.via === 'proposal')
-  const issues = await collectIssues($, dir, github, proposal, git.branch, git.pr, now)
+  const plan = await refreshPlan($, previous, hints.plan, { cwd: dir, branch: git.branch, pr: git.pr, now })
 
-  return {
-    ...previous,
-    ...git,
-    planning: [...files, ...issues.items],
-    warnings: [...withoutGithubWarnings(previous.warnings), ...issues.warnings],
-    refreshedAt: now,
-  }
+  return { ...previous, ...git, ...plan, refreshedAt: now }
 }
 
-/** A GitHub issue as `gh` reads it now; a file's work item as its block in that file, else in that file's history. */
+/** A work item as its provider shows it: a text in the reader, or its page in the browser. */
 async function showPlanning($: Engine, item: PlanningItem): Promise<void> {
   const snap = await read($, snapshotAtom)
-  // The planning files of the folder that holds the change.
+  // The files of the folder that holds the change.
   const dir = snap?.root || (await sessionCwd($))
   const hints = await currentHints($)
-  if (item.issue !== undefined) {
-    const doc = await issueDoc($, dir, item, hints.plan?.github?.repo ?? repoOfUrl(snap?.pr?.url))
-    await showDoc($, { ...doc, from: `plan:${item.id}` })
+  const opened = await openItem($, item, hints.plan, { cwd: dir, branch: snap?.branch, pr: snap?.pr, now: await $.clock.now() })
+  if ('url' in opened) {
+    await openOutside($, opened.url, opened.what)
     return
   }
-  const source = hints.plan?.sources.find(candidate => candidate.file === item.file)
-  const files = [item.file, source?.history].filter((file): file is string => file !== undefined)
-  for (const file of files) {
-    const text = await readFile($, `${dir}/${file}`)
-    const block = text === undefined ? undefined : itemBlock(text, item.id)
-    if (block !== undefined) {
-      await showDoc($, { title: `${item.id} · ${file}`, text: block, from: `plan:${item.id}` })
-      return
-    }
-  }
-  await showDoc($, { title: item.id, text: `${item.id} is not in ${files.join(' or ')}.`, from: `plan:${item.id}` })
+  await showDoc($, { ...opened.doc, from: `plan:${item.id}` })
 }
 
 async function openOutside($: Engine, target: string, what: string): Promise<void> {
