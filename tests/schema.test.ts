@@ -135,9 +135,9 @@ describe('board.yaml', () => {
       section: 'Planning Items|Backlog Items',
       agent: 'planner',
       isBeforeExplore: true,
-      sources: [
-        { pattern: 'WI-\\d+', file: 'docs/backlog.md', history: undefined },
-        { pattern: 'BUG-\\d+', file: 'docs/bugs.md', history: 'docs/bugs-closed.md' },
+      refs: [
+        { provider: 'file', pattern: 'WI-\\d+', file: 'docs/backlog.md', history: undefined },
+        { provider: 'file', pattern: 'BUG-\\d+', file: 'docs/bugs.md', history: 'docs/bugs-closed.md' },
       ],
     })
     expect(hints.design).toMatchObject({
@@ -174,7 +174,7 @@ commits:
 `,
       '/repo/board.yaml',
     )
-    expect(hints.plan?.sources).toEqual([])
+    expect(hints.plan?.refs).toEqual([])
     expect(hints.design?.open).toBeUndefined()
     expect(hints.design?.nextNew).toBeUndefined()
     expect(hints.commits.task).toBeUndefined()
