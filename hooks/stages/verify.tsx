@@ -4,6 +4,7 @@ import { prWords } from '../hosts'
 import { fit, shipRow } from '../ui'
 import type { NextStep, PaneContext, Stage, StageContext, StageKind } from './base'
 import { stageOf } from './base'
+import { tasksNote } from './apply'
 import { designPending } from './design'
 import { findingsNote, isCommandFor, isRunning } from './evidence'
 
@@ -39,14 +40,15 @@ export const verifyStage: StageKind = {
     }
   },
 
-  /** Without a PR stage, the change goes from its tasks to verify, then to the archive. */
+  /** Once Apply has started and stopped, verify the change before the archive, unless it is verified. */
   next(ctx: StageContext, stages: readonly Stage[]): NextStep | undefined {
     const { snap, change } = ctx
-    if (snap === null || change === undefined || stageOf(stages, 'pr') !== undefined || stageOf(stages, 'verify')?.state === 'done') {
+    if (snap === null || change === undefined || stageOf(stages, 'verify')?.state === 'done') {
       return undefined
     }
+    const before = stageOf(stages, 'archive') === undefined ? '' : ' before the archive'
 
-    return { text: `/opsx:verify ${change}`, why: `the tasks are done. Verify the change before the archive${designPending(ctx, stages)}` }
+    return { text: `/opsx:verify ${change}`, why: `${tasksNote(ctx)}. Verify the change${before}${designPending(ctx, stages)}` }
   },
 
   /**

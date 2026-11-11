@@ -5,16 +5,19 @@
 // condition holds, and draws its part of the pane. Pure: a stage never takes `$`.
 import type { RenderChildren } from 'claude-code'
 
-import type { AgentRun, BoardHints, Flags, Live, MainUsage, Phase, PlanningItem, ReaderDoc, Snapshot, TaskGroup } from '../../types'
+import type { AgentRun, BoardHints, Flags, Live, MainUsage, Phase, PlanningItem, ReaderDoc, Snapshot, StageKey, TaskGroup } from '../../types'
 import type { Kit } from '../ui'
 
-export type StageKey = 'plan' | 'explore' | 'design' | 'propose' | 'apply' | 'verify' | 'pr' | 'archive'
-export type StageState = 'done' | 'active' | 'pending' | 'blocked' | 'na'
+export type { StageKey } from '../../types'
+/** `partial`: the stage ended with its work not all done, such as an archived change with open tasks. */
+export type StageState = 'done' | 'active' | 'pending' | 'blocked' | 'partial' | 'na'
 
 /**
  * A stage as the board shows it.
  * `isInReview`: the work of the stage is written, but the next step has not started.
  * `isRunning`: the work of the stage runs now, so Next offers nothing until it stops.
+ * `isInfo`: the stage only shows how something stands, such as the pull request: it is never
+ * the stage the work is at.
  */
 export type Stage = {
   key: StageKey
@@ -24,6 +27,7 @@ export type Stage = {
   isOptional: boolean
   isInReview?: boolean
   isRunning?: boolean
+  isInfo?: boolean
 }
 
 /** The step Next offers: the command it puts in the prompt, and why. */
@@ -61,6 +65,8 @@ export type StageContext = {
   isAgentRunning: (...phases: Phase[]) => boolean
   /** The main turn of the last workflow command runs now, and the command is of this phase and change. */
   isCommandRunning: (phase: Phase) => boolean
+  /** A main turn runs now, whatever it is for. */
+  isTurnRunning: boolean
 }
 
 /** What a section may do: show a text in the reader, open a page, fold a row, tell, or show an agent. */

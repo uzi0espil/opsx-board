@@ -4,6 +4,7 @@
 
 - [The stages that OpenSpec gives](#the-stages-that-openspec-gives)
 - [Add stages with board.yaml](#add-stages-with-boardyaml)
+- [Shape the flow](#shape-the-flow)
 - [GitHub issues](#github-issues)
 - [The check](#the-check)
 
@@ -93,12 +94,35 @@ Its parts:
 
 | Key | What it adds |
 |-----|--------------|
-| `stages` | A stage that `collects: work-item` (Plan) and a stage that `collects: design` (Design). Each reads one `section` of the proposal. `before: explore` puts a stage before Explore. A design stage names its `command` and the commands that Next offers. |
+| `stages` | A stage that `collects: work-item` (Plan) and a stage that `collects: design` (Design). Each reads one `section` of the proposal. A design stage names its `command` and the commands that Next offers. An entry without `collects` sets a stage of the board, see [Shape the flow](#shape-the-flow). |
 | `refs` | How a reference resolves. A `work-item` ref maps an ID `pattern` to the `file` that holds the items, and their `history`. A `design` ref maps a path `pattern` to a design folder (`dir` with `{id}`), the file a click opens, its screenshots, and its decision log. |
 | `artifacts.<id>.verdict` | The verdict values of a review artifact, which values `block` or `warn`, the command that revises a blocked change, and notes. |
 | `commits` | Commit subject patterns of the apply run: `artifacts`, `task` (group number in its first group), `reviewFix`, and `archive`. `{change}` stands for the change name. |
 | `verify` | The label of the Verify stage, the review agent, and the pattern of its finding lines. |
 | `apply.skipReportAgents` | More agents that never get the progress request. |
+
+## Shape the flow
+
+The flow of a change runs Explore › Plan › Design › Propose › Apply › Verify › PR › Archive, and
+a team may work another way. An entry of `stages` without `collects` names a stage by its `id`
+and sets it:
+
+```yaml
+stages:
+  - { id: verify, label: Review, optional: true }
+  - { id: pr, hidden: true }
+  - { id: explore, after: propose }
+```
+
+| Key | What it does |
+|-----|--------------|
+| `label` | The name of the stage in the rail and its section. |
+| `hidden` | `true` leaves the stage out of the rail, the pane, and Next. The header still shows `archived` for an archived change when Archive is hidden. |
+| `optional` | `true`: Next skips the stage, and it shows as not applicable (`–`) until it starts. |
+| `before`, `after` | Moves the stage before or after another one. A stage that `collects` takes them too, such as `before: explore` for Plan. |
+
+The ids are `explore`, `plan`, `design`, `propose`, `apply`, `verify`, `pr`, and `archive`. A new
+kind of stage needs code in the board, as a `board.yaml` names no behaviour.
 
 ## GitHub issues
 

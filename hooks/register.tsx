@@ -473,12 +473,13 @@ async function refresh($: Engine, request: RefreshRequest): Promise<void> {
     const root = await changeRoot($, dir, binding.change, previous)
     const fingerprint = await signature($, root, binding.change, known, designViews)
     const isGitDue = request.isGit === true || now - lastGitAt > GIT_MS
-    // A change with work on its branch, or one archived on its branch whose pull request is still open.
+    // A change with work on its branch, or one whose open pull request no branch read finds:
+    // archived on its branch, or seen from the main branch.
+    const isOffBranch = previous?.archivedAs !== undefined || previous?.branch === 'main' || previous?.branch === 'HEAD'
     const isMidFlight =
       previous !== null &&
-      (previous.archivedAs === undefined
-        ? previous.commits.some(commit => commit.kind === 'artifacts' || commit.kind === 'task')
-        : previous.pr?.state === 'OPEN')
+      ((previous.archivedAs === undefined && previous.commits.some(commit => commit.kind === 'artifacts' || commit.kind === 'task')) ||
+        (isOffBranch && previous.pr?.state === 'OPEN'))
     const isPrDue = request.isPr === true || (isMidFlight && now - lastPrAt > PR_MS)
     const isSame = fingerprint === lastSignature && previous?.change === binding.change && previous.root === root
     if (isSame && request.isForced !== true && !isGitDue && !isPrDue) {
@@ -767,9 +768,11 @@ async function noteMainTurn($: Engine, turn: TurnEnd): Promise<void> {
   await addMainUsage($, unseenUsage(turn))
   const now = await $.clock.now()
   // The turn that ran the last workflow command is over, and with it that command's run.
-  await update($, liveAtom, current =>
-    current.command === undefined || current.command.endedAt !== undefined ? current : { ...current, command: { ...current.command, endedAt: now } },
-  )
+  await update($, liveAtom, current => ({
+    ...current,
+    turnEndedAt: now,
+    command: current.command === undefined || current.command.endedAt !== undefined ? current.command : { ...current.command, endedAt: now },
+  }))
   if (turn.reason !== 'answer') {
     // An interrupt, an error, or a refusal stops an apply run, until the next main turn.
     await update($, liveAtom, current => ({ ...current, stoppedAt: now }))
@@ -1120,11 +1123,13 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  // A main turn after an interrupt goes on with the apply run: the person's next prompt, or a
-  // background agent's notification, resumes it.
+  // A main turn runs until it completes: during an apply run, Next waits for it. A main turn
+  // after an interrupt goes on with the apply run: the person's next prompt, or a background
+  // agent's notification, resumes it.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined && (await read($, liveAtom)).stoppedAt !== undefined) {
-      await update($, liveAtom, live => ({ ...live, stoppedAt: undefined }))
+    if (e.agentId === undefined) {
+      const now = await $.clock.now()
+      await update($, liveAtom, live => ({ ...live, stoppedAt: undefined, turnAt: now }))
     }
 
     return next(e)

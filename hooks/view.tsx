@@ -10,7 +10,7 @@ import { prWords } from './hosts'
 import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf } from './ledger'
 import { currentStage, stageText } from './model'
 import { formatDuration, formatTokens, reflowTables } from './parse'
-import { STAGES, flowOf, nextStep, stageKind } from './stages'
+import { STAGES, flowOf, isHidden, nextStep, stageKind } from './stages'
 import type { PaneContext, StageKind, StageState } from './stages'
 import { groupViews } from './stages/apply'
 import { stageOf } from './stages/base'
@@ -177,8 +177,9 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
     usageKey,
     changeAgents,
   }
-  // The section a stage draws, from its own state.
-  const draw = (kind: StageKind | undefined) => (kind?.section === undefined ? null : kind.section(pane, stageOf(stages, kind.key)))
+  // The section a stage draws, from its own state. A stage board.yaml hides draws none.
+  const draw = (kind: StageKind | undefined) =>
+    kind?.section === undefined || isHidden(flow, kind.key) ? null : kind.section(pane, stageOf(stages, kind.key))
 
   const nextCard =
     next === undefined ? null : (
@@ -340,14 +341,19 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           ),
         ])
 
-  // The stages after Apply share one section: each adds its rows.
-  const shipSection = section('ship', `${stageOf(stages, 'verify')?.label ?? 'Verify'} & ship`, undefined, true, null, () =>
-    STAGES.flatMap(kind => {
-      const stage = stageOf(stages, kind.key)
+  // The stages after Apply share one section: each stage of the flow adds its rows.
+  const shippers = STAGES.filter(kind => kind.shipRows !== undefined && stageOf(stages, kind.key) !== undefined)
+  const verify = stageOf(stages, 'verify')
+  const shipSection =
+    shippers.length === 0
+      ? null
+      : section('ship', verify === undefined ? 'Ship' : `${verify.label} & ship`, undefined, true, null, () =>
+          shippers.flatMap(kind => {
+            const stage = stageOf(stages, kind.key)
 
-      return stage === undefined || kind.shipRows === undefined ? [] : kind.shipRows(pane, stage)
-    }),
-  )
+            return stage === undefined || kind.shipRows === undefined ? [] : kind.shipRows(pane, stage)
+          }),
+        )
 
   return (
     <Box flexDirection="column">
@@ -358,7 +364,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           <Text color="warning" wrap="truncate-end">{`⚠  ${warning}`}</Text>
         </Box>
       ))}
-      {STAGES.map(draw)}
+      {STAGES.map(kind => (stageOf(stages, kind.key) === undefined ? null : draw(kind)))}
       {agentsSection}
       {shipSection}
       {nextCard}

@@ -2,7 +2,7 @@
 // --version`, `glab auth status`, and `glab api` GET requests only, as an argument list with no
 // shell. `:id` stands for the project of the working directory.
 import type { PullRequest } from '../../types'
-import type { ArchiveCommit, Io, PrHostReader } from './base'
+import type { CommitRef, Io, PrHostReader } from './base'
 
 /** How long a failed `glab --version` stands before the board asks again. */
 const GLAB_RETRY_MS = 300_000
@@ -112,19 +112,7 @@ export const gitlabHost: PrHostReader = {
   ofBranch: (io, cwd, branch) => branchMergeRequest(io, cwd, branch),
   view: viewMergeRequest,
 
-  /**
-   * GitLab relates a commit to its merge requests, so the commit that archived the change finds
-   * the merge request that archived it. A change archived on the main branch after its merge,
-   * such as by a CI job, has an archive commit of no merge request: then the last commit that
-   * added or changed a file of its active folder finds the merge request that merged it.
-   */
-  async ofArchive(io: Io, cwd: string, archive: ArchiveCommit, change: string): Promise<PullRequest | undefined> {
-    const archiving = await commitMergeRequest(io, cwd, archive.hash)
-    if (archiving !== undefined) {
-      return archiving
-    }
-    const last = await io.run(['git', 'log', '-1', '--diff-filter=AM', '--format=%H', '--', `openspec/changes/${change}`], cwd)
-
-    return commitMergeRequest(io, cwd, last?.exitCode === 0 ? last.stdout.trim() : '')
-  },
+  /** GitLab relates a commit to its merge requests, so the commit that archived the change finds the one that archived it. */
+  ofArchive: (io: Io, cwd: string, archive: CommitRef) => commitMergeRequest(io, cwd, archive.hash),
+  ofCommit: (io: Io, cwd: string, commit: CommitRef) => commitMergeRequest(io, cwd, commit.hash),
 }

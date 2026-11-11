@@ -260,7 +260,7 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     if (commitMrs) {
       return ran(JSON.stringify(state.commitMrs[commitMrs[1] ?? ''] ?? []))
     }
-    const changed = /^git log -1 --diff-filter=AM --format=%H -- openspec\/changes\/([\w-]+)$/.exec(command)
+    const changed = /^git log -1 --diff-filter=AM --format=%H%x09%s -- openspec\/changes\/([\w-]+)$/.exec(command)
     if (changed) {
       return ran(state.activeLogs[changed[1] ?? ''] ?? '')
     }
@@ -403,7 +403,9 @@ describe('opsx-board', () => {
       expect((await ui.find({ key: 'group:0' }))?.text).toContain('3/3')
       expect((await ui.find({ key: 'group:1' }))?.text).toContain('a1b2c3d')
       expect((await ui.find({ key: 'group:2' }))?.text).toContain('0/3')
-      expect((await ui.find({ key: 'next' }))?.text).toContain('/opsx:apply demo-change')
+      // Four of nine tasks are done and nothing runs: Next goes on to the next stage.
+      expect((await ui.find({ key: 'next' }))?.text).toContain('/opsx:verify demo-change')
+      expect((await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text).toContain('4 of 9 tasks done')
       // The fold state is the session's, so fold Propose again for the next surface.
       await ui.press({ key: 'fold:propose' })
       await ui.unmount()
@@ -808,7 +810,7 @@ describe('opsx-board', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     // Task 1.2 stays [~] for the owner, and the pull request exists: the run is over.
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive demo-change')
-    expect((await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text).toContain('1 task stays [~]')
+    expect((await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text).toBe('fills the prompt · the pull request is open; 8 of 9 tasks done')
     await ui.unmount()
   })
 
@@ -940,7 +942,7 @@ describe('opsx-board', () => {
     await $.command.run(typed('opsx-board', 'csv-import'))
     await clock.advance(300)
     const board = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('✔  PR › ✔  Archive')
+    expect((await board.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('–  PR › ✔  Archive')
     expect((await board.find({ key: 'pr' }))?.text).not.toContain('#231')
     await board.unmount()
   })
@@ -1273,7 +1275,7 @@ describe('opsx-board with other schemas', () => {
     await clock.advance(300)
     expect(state.runs).toContain('openspec schema which team-flow --json')
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toContain('✔  Apply › ✔  Verify › ✔  PR › ✔  Archive')
+    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toContain('✔  Apply › ✔  Verify › –  PR › ✔  Archive')
     expect((await ui.find({ type: 'Text', text: /artifacts$/ }))?.text).toBe('3/5 artifacts')
     await ui.press({ key: 'fold:propose' })
     const rows = []
@@ -1328,7 +1330,7 @@ describe('opsx-board with GitHub issues', () => {
     await clock.advance(300)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toBe(
-      '–  Explore › ✔  Issues › ✔  Propose › ✔  Apply › ✔  Verify › ✔  PR ›  ○  Archive ',
+      '–  Explore › ✔  Issues › ✔  Propose › ✔  Apply › ✔  Verify › ▶  PR ›  ○  Archive ',
     )
     await ui.press({ key: 'fold:plan' })
     const rows = []
@@ -1503,9 +1505,10 @@ describe('opsx-board and the host of the pull request', () => {
     const { clock, state, ui } = await applied($, on, 'git@gitlab.example.com:o/r.git', world => {
       world.mrs = '[]'
     })
-    // No merge request yet: the apply run goes on to it, so Next waits.
+    // No merge request yet, and the tasks are done: the merge request holds nothing back.
     expect((await ui.find(RAIL))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply ›  ○  Verify  › ○  MR › ○  Archive')
-    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify host-change')
+    expect(await why(ui)).toBe('fills the prompt · the tasks are done. Verify the change before the archive')
     await ui.press({ key: 'pr' })
     expect(state.toasts.at(-1)).toBe('No merge request for this branch yet')
 
@@ -1515,7 +1518,7 @@ describe('opsx-board and the host of the pull request', () => {
     await clock.advance(300)
     expect(state.runs).toContain('glab api projects/:id/merge_requests?source_branch=host-change&order_by=created_at&sort=desc&per_page=1')
     expect(state.toasts).toContain('Merge request !12 open')
-    expect((await ui.find(RAIL))?.text).toContain('✔  MR')
+    expect((await ui.find(RAIL))?.text).toContain('▶  MR')
     expect((await ui.find({ key: 'pr' }))?.text).toContain('MR      !12 open · open in the browser ↗')
     expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive host-change')
     expect(await why(ui)).toBe('fills the prompt · the merge request is open')
@@ -1532,7 +1535,7 @@ describe('opsx-board and the host of the pull request', () => {
     const { clock, ui } = await applied($, on, 'https://github.com/o/r.git')
     await $.command.run(typed('opsx-board', ''))
     await clock.advance(300)
-    expect((await ui.find(RAIL))?.text).toContain('✔  PR')
+    expect((await ui.find(RAIL))?.text).toContain('▶  PR')
     expect((await ui.find({ key: 'pr' }))?.text).toContain('PR      #227 open · open in the browser ↗')
     expect(await why(ui)).toBe('fills the prompt · the pull request is open')
     expect((await ui.find({ type: 'Text', text: /^click a row/ }))?.text).toContain('design, PR → browser')
@@ -1599,6 +1602,28 @@ describe('opsx-board and the host of the pull request', () => {
     await board.unmount()
   })
 
+  test('a change merged into the main branch and not archived finds its merge request by its last commit, and Next offers the archive', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 10, 12, 9) })
+    const state = world(on, HOSTED_FILES, 'main')
+    state.status = { 'host-change': HOSTED_STATUS }
+    state.remote = 'https://gitlab.com/o/r.git'
+    const squash = '5c0a'.repeat(10)
+    state.activeLogs['host-change'] = `${squash}\tfeat: build the writer\n`
+    state.commitMrs[squash] = [mergeRequest(42, 'merged')]
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ key: 'pr' }))?.text).toContain('!42 merged')
+    expect((await ui.find(RAIL))?.text).toContain('✔  MR')
+    // Merged is not finished: the change still waits for its archive.
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive host-change')
+    expect(await why(ui)).toBe('fills the prompt · the merge request is merged')
+    // The commit is asked about once, not at each read of git.
+    await clock.advance(65_000)
+    expect(state.runs.filter(run => run === `glab api projects/:id/repository/commits/${squash}/merge_requests`)).toHaveLength(1)
+    await ui.unmount()
+  })
+
   test('a GitLab server with a name of its own: the MR stage, once glab is logged in to it', async ($, on) => {
     const { clock, state, ui } = await applied($, on, 'https://code.corp.example/group/sub/r.git', world => {
       world.glabHosts = ['gitlab.com', 'code.corp.example']
@@ -1615,7 +1640,7 @@ describe('opsx-board and the host of the pull request', () => {
     await ui.unmount()
   })
 
-  test('a repository on GitLab without glab: no MR stage, and the apply run ends with its tasks', async ($, on) => {
+  test('a repository on GitLab without glab: no MR stage, and Next goes on once the apply run is over', async ($, on) => {
     const { clock, state, ui } = await applied($, on, 'git@gitlab.example.com:o/r.git', world => {
       world.isGlabMissing = true
       world.prs = '[]'
@@ -1626,11 +1651,11 @@ describe('opsx-board and the host of the pull request', () => {
     // gh is installed, but the board asks it nothing about a GitLab repository.
     expect(ghRuns(state)).toEqual([])
 
-    // The same change on GitHub: the apply run goes on to the pull request, so Next waits.
+    // The same change on GitHub shows its PR stage, which holds Next back no more than the tasks do.
     state.remote = 'https://github.com/o/r.git'
     await clock.advance(35_000)
     expect((await ui.find(RAIL))?.text).toContain('○  PR')
-    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify host-change')
     await ui.unmount()
   })
 
@@ -1660,6 +1685,136 @@ describe('opsx-board and the host of the pull request', () => {
     expect(await ui.find({ key: 'pr' })).toBeUndefined()
     expect(state.runs.filter(run => run.startsWith('gh pr ') || run.startsWith('glab api '))).toEqual([])
     await ui.unmount()
+  })
+})
+
+describe('opsx-board flow', () => {
+  const FLOW = `${CWD}/openspec/changes/flow-change`
+  // One task done, one left, and one after the merge.
+  const FLOW_TASKS = '## 1. Build\n\n- [x] 1.1 Build the writer\n- [ ] 1.2 Write the status file\n\n## 2. After the merge\n\n- [ ] 2.1 Run the suite on main\n'
+  const FLOW_FILES: Record<string, string> = {
+    [`${FLOW}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-11-01\n',
+    [`${FLOW}/proposal.md`]: '## Why\n',
+    [`${FLOW}/tasks.md`]: FLOW_TASKS,
+  }
+  const FLOW_STATUS = {
+    ...SPEC_DRIVEN_STATUS_JSON,
+    changeName: 'flow-change',
+    isComplete: true,
+    artifacts: SPEC_DRIVEN_STATUS_JSON.artifacts.map(artifact => ({ id: artifact.id, outputPath: artifact.outputPath, requires: artifact.requires, status: 'done' })),
+  }
+  const RAIL = { type: 'Text', text: /Explore .* (Archive|Close|Apply)/ } as const
+  const why = async (ui: { find: (query: object) => Promise<{ text?: string } | undefined> }) =>
+    (await ui.find({ type: 'Text', text: /^fills the prompt/ }))?.text
+
+  test('once a task is done, Next goes on to the next stage while nothing runs; after an interrupt, it offers to apply again', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 10, 12, 9) })
+    const state = world(on, FLOW_FILES, 'flow-change')
+    state.status = { 'flow-change': FLOW_STATUS }
+    state.remote = undefined
+    on('command.run', () => ({ text: '' }))
+    on('turn.complete', () => ({ text: '' }))
+    on('turn.start', (_, e) => ({ turnId: e.turnId }))
+    const endTurn = (turnId: string, reason: 'answer' | 'aborted' = 'answer') =>
+      $.turn.complete({ answer: '', durationMs: 1, isAborted: reason === 'aborted', turnId, reason })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await $.command.run(typed('opsx:apply', 'flow-change'))
+    await clock.advance(300)
+    // The turn of the command runs: Next waits.
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-a')
+    await clock.advance(300)
+
+    // A task is done and nothing runs: Next goes on to Verify, though tasks stay open.
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify flow-change')
+    expect(await why(ui)).toBe('fills the prompt · 1 of 3 tasks done. Verify the change before the archive')
+    expect((await ui.find(RAIL))?.text).toContain('▶  Apply')
+
+    // A main turn of the run works on: Next waits for it, and comes back once it ends.
+    await $.turn.start({ text: 'Go on with group 1.', turnId: 't-b' })
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-b')
+    await clock.advance(300)
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify flow-change')
+
+    // An interrupt: Next offers to apply again, until the next main turn starts.
+    await $.turn.start({ text: 'Go on.', turnId: 't-c' })
+    await endTurn('t-c', 'aborted')
+    await clock.advance(300)
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:apply flow-change')
+    expect(await why(ui)).toBe('fills the prompt · the apply run stopped. Apply again to go on')
+    await $.turn.start({ text: 'Go on.', turnId: 't-d' })
+    await clock.advance(300)
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    await endTurn('t-d')
+    await clock.advance(300)
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:verify flow-change')
+
+    // Verified: the archive comes next, with the tasks it leaves open.
+    await $.command.run(typed('opsx:verify', 'flow-change'))
+    await $.turn.complete({ answer: 'All checks passed. Ready for archive.', durationMs: 1, isAborted: false, turnId: 't-v', reason: 'answer' })
+    await clock.advance(300)
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive flow-change')
+    expect(await why(ui)).toBe('fills the prompt · the change is verified; 1 of 3 tasks done')
+    await ui.unmount()
+  })
+
+  test('an archived change with open tasks is finished: Apply is partly done, and Next offers nothing', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const state = world(on, DEMO_FILES, 'main')
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    archive(state, CWD, '2026-10-22-demo-change')
+    await clock.advance(4500)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Text', text: /archived/ }))?.text).toBe(' ✔  archived ')
+    expect((await ui.find({ type: 'Text', text: /Plan .* Archive/ }))?.text).toContain('◐  Apply')
+    expect(await ui.find({ key: 'next' })).toBeUndefined()
+    // The ended Apply folds; it still counts its tasks.
+    expect(await ui.find({ key: 'group:2' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: /^4\/9/ }))?.text).toContain('4/9')
+    await ui.unmount()
+  })
+
+  test('board.yaml renames, hides, moves, and makes stages optional; a hidden Archive still leaves the change archived', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 10, 12, 9) })
+    const board = `version: 1
+stages:
+  - { id: verify, optional: true }
+  - { id: archive, label: Close }
+  - { id: explore, after: propose }
+`
+    const done = FLOW_TASKS.replace(/- \[ \]/g, '- [x]')
+    const state = world(on, { ...FLOW_FILES, [`${FLOW}/tasks.md`]: done, '/home/me/.claude/opsx-board/schemas/spec-driven/board.yaml': board }, 'flow-change')
+    state.status = { 'flow-change': FLOW_STATUS }
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    // Explore moved after Propose, Verify is optional (not applicable until it runs), and Archive is Close.
+    expect((await ui.find({ type: 'Text', text: /Propose .* Close/ }))?.text).toBe('✔  Propose › –  Explore › ✔  Apply › –  Verify › ○  PR ›  ○  Close ')
+    // Next skips the optional Verify.
+    expect((await ui.find({ key: 'next' }))?.text).toBe('Next: /opsx:archive flow-change')
+    await ui.unmount()
+
+    // Archive hidden: the rail and the pane leave it out, and the archived change still says so.
+    state.files.set('/home/me/.claude/opsx-board/schemas/spec-driven/board.yaml', 'version: 1\nstages:\n  - { id: archive, hidden: true }\n  - { id: pr, hidden: true }\n')
+    for (const [path, text] of [...state.files]) {
+      if (path.startsWith(`${FLOW}/`)) {
+        state.files.delete(path)
+        state.files.set(path.replace(FLOW, `${CWD}/openspec/changes/archive/2026-11-12-flow-change`), text)
+      }
+    }
+    delete state.status['flow-change']
+    await $.command.run(typed('opsx-board', 'flow-change'))
+    await clock.advance(300)
+    const after = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await after.find({ type: 'Text', text: /archived/ }))?.text).toBe(' ✔  archived ')
+    expect((await after.find({ type: 'Text', text: /Explore .* Verify/ }))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply › ✔  Verify')
+    expect(await after.find({ key: 'pr' })).toBeUndefined()
+    await after.unmount()
   })
 })
 

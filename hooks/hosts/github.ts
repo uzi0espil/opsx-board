@@ -2,7 +2,7 @@
 // for the pull request of a branch, and `gh pr view` for one by its number.
 import type { PullRequest } from '../../types'
 import { closingRefs, hasGh, isGhHost, runGh } from '../github'
-import type { ArchiveCommit, Io, PrHostReader } from './base'
+import type { CommitRef, Io, PrHostReader } from './base'
 
 const isMainBranch = (branch: string): boolean => branch === 'main' || branch === 'HEAD'
 
@@ -49,6 +49,20 @@ async function pullRequestHolding(io: Io, cwd: string, branch: string, hash: str
   }
 }
 
+/** The number a squash commit gives its pull request: the last `(#N)` of the subject; a `[skip ci]` may follow it. */
+const squashNumber = (commit: CommitRef): number | undefined => {
+  const number = [...commit.subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
+
+  return number === undefined ? undefined : Number(number)
+}
+
+/** The pull request a squash commit names. */
+async function pullRequestOfSquash(io: Io, cwd: string, commit: CommitRef): Promise<PullRequest | undefined> {
+  const number = squashNumber(commit)
+
+  return number === undefined ? undefined : viewPullRequest(io, cwd, number)
+}
+
 /** A pull request by its number, as `gh` reads it now; the issues it closes stay with the caller. */
 async function viewPullRequest(io: Io, cwd: string, number: number): Promise<PullRequest | undefined> {
   if (!Number.isSafeInteger(number) || number < 1) {
@@ -75,13 +89,14 @@ export const githubHost: PrHostReader = {
    * checkout of the change's own branch, the commit has no number: the pull request of the
    * branch counts when its commits hold that commit.
    */
-  ofArchive(io: Io, cwd: string, archive: ArchiveCommit, _change: string, branch: string | undefined): Promise<PullRequest | undefined> {
-    // The last `(#N)` of the subject; a `[skip ci]` may follow it.
-    const number = [...archive.subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
-    if (number === undefined) {
+  ofArchive(io: Io, cwd: string, archive: CommitRef, branch: string | undefined): Promise<PullRequest | undefined> {
+    if (squashNumber(archive) === undefined) {
       return branch === undefined || !/^[0-9a-f]{40}$/.test(archive.hash) ? Promise.resolve(undefined) : pullRequestHolding(io, cwd, branch, archive.hash)
     }
 
-    return viewPullRequest(io, cwd, Number(number))
+    return pullRequestOfSquash(io, cwd, archive)
   },
+
+  /** A squash commit names its pull request as `(#N)`. */
+  ofCommit: pullRequestOfSquash,
 }

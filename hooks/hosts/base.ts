@@ -15,8 +15,8 @@ export type PrWords = {
   ref: (number: number) => string
 }
 
-/** The commit that added the archive folder of a change: its hash and its subject. */
-export type ArchiveCommit = { hash: string; subject: string }
+/** A commit: its hash and its subject. */
+export type CommitRef = { hash: string; subject: string }
 
 export interface PrHostReader {
   /** The host, as the snapshot names it. */
@@ -31,5 +31,7 @@ export interface PrHostReader {
   /** A pull request by its number, as the CLI reads it now. */
   view(io: Io, cwd: string, number: number): Promise<PullRequest | undefined>
   /** The pull request that merged an archived change, from the commit that archived it. */
-  ofArchive(io: Io, cwd: string, archive: ArchiveCommit, change: string, branch: string | undefined): Promise<PullRequest | undefined>
+  ofArchive(io: Io, cwd: string, archive: CommitRef, branch: string | undefined): Promise<PullRequest | undefined>
+  /** The pull request a commit of the main branch came with. */
+  ofCommit(io: Io, cwd: string, commit: CommitRef): Promise<PullRequest | undefined>
 }

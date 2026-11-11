@@ -8,12 +8,18 @@ import { exploreRunsOf } from './stages/evidence'
 
 /**
  * The stage the work is at: the furthest active one (an optional stage left blocked
- * behind it does not hold the work back), else the first blocked, else the first pending.
+ * behind it does not hold the work back), else the first blocked, else the first pending. A
+ * stage that only shows how something stands, such as the pull request, is never the one.
  */
-export const currentStage = (stages: readonly Stage[]): Stage | undefined =>
-  [...stages].reverse().find(stage => stage.state === 'active') ??
-  stages.find(stage => stage.state === 'blocked') ??
-  stages.find(stage => stage.state === 'pending')
+export const currentStage = (stages: readonly Stage[]): Stage | undefined => {
+  const work = stages.filter(stage => stage.isInfo !== true)
+
+  return (
+    [...work].reverse().find(stage => stage.state === 'active') ??
+    work.find(stage => stage.state === 'blocked') ??
+    work.find(stage => stage.state === 'pending')
+  )
+}
 
 export const phaseOfStage = (stage: Stage | undefined): Phase => {
   switch (stage?.key) {

@@ -1,6 +1,6 @@
 // Pure: what the change and the session show, which more than one stage reads. The last workflow
 // command, what runs now, the apply run, the designs in review, and the verdict that blocks.
-import type { AgentRun, BoardHints, DesignView, Live, Phase, Snapshot, TaskGroup } from '../../types'
+import type { AgentRun, BoardHints, DesignView, Live, Phase, Snapshot } from '../../types'
 import { changeFromArgs, countDone, phaseOfCommand } from '../parse'
 import type { StageContext } from './base'
 
@@ -19,12 +19,8 @@ export const isCommandFor = (live: Live, change: string | undefined): boolean =>
 /** The main turn that runs the last workflow command has not ended. */
 export const isCommandTurn = (live: Live): boolean => live.command !== undefined && live.command.endedAt === undefined
 
-/** Every task is done or left `[~]` or `[-]`: a task left open does not hold the change back, as the repository keeps owner steps open. */
-export const isTasksSettled = (groups: readonly TaskGroup[]): boolean => {
-  const tasks = groups.flatMap(group => group.tasks)
-
-  return tasks.length > 0 && tasks.every(task => task.mark !== ' ')
-}
+/** A main turn has started and not ended. */
+export const isTurnRunning = (live: Live): boolean => live.turnAt !== undefined && (live.turnEndedAt ?? 0) < live.turnAt
 
 /** The change has apply work: a checked task, or a commit of the apply run. */
 export const hasApplyWork = (snap: Snapshot): boolean =>
@@ -127,5 +123,6 @@ export const stageContext = (
     // The work of a stage runs now: the main turn of its command, or an agent of its phase.
     isAgentRunning: (...phases: Phase[]) => agents.some(agent => phases.includes(agent.phase) && isRunning(agent)),
     isCommandRunning: (phase: Phase) => isCommandTurn(live) && commandPhase === phase && isCommandFor(live, snap?.change),
+    isTurnRunning: isTurnRunning(live),
   }
 }

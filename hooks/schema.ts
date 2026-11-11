@@ -5,9 +5,9 @@
 // pattern must compile and stay short. A part that fails the check is dropped with a warning.
 // A provider runs only the read commands the board holds itself: board.yaml names no command.
 // Each provider checks the keys of its own refs (see ./providers).
-import type { BoardHints, CommitHints, DesignHints, PlanHints, VerdictHints, WorkItemRef } from '../types'
+import type { BoardHints, CommitHints, DesignHints, PlanHints, StageKey, StageSetting, VerdictHints, WorkItemRef } from '../types'
 import { asString, asStrings, isDoc, pathHint, patternHint } from './check'
-import type { Check } from './check'
+import type { Check, Doc } from './check'
 import { isWorkItemProvider, readWorkItemRef } from './providers'
 import { YamlError, parseYaml } from './yaml'
 
@@ -224,6 +224,74 @@ const nextCommand = (check: Check, where: string, value: unknown): string | unde
   return text
 }
 
+/** Every stage of the board, in the default order of the flow. */
+export const STAGE_KEYS: readonly StageKey[] = ['explore', 'plan', 'design', 'propose', 'apply', 'verify', 'pr', 'archive']
+
+/** A stage that board.yaml moves before or after another. */
+type StageMove = { key: StageKey; before?: StageKey; after?: StageKey }
+
+const stageKeyOf = (check: Check, where: string, name: string, value: unknown): StageKey | undefined => {
+  const text = asString(value)
+  if (text === undefined) {
+    return undefined
+  }
+  const key = STAGE_KEYS.find(candidate => candidate === text)
+  if (key === undefined) {
+    check.warnings.push(`${where}: ${name} "${text}" is no stage of the board`)
+  }
+
+  return key
+}
+
+const flagOf = (check: Check, where: string, name: string, value: unknown): boolean | undefined => {
+  if (value !== undefined && typeof value !== 'boolean') {
+    check.warnings.push(`${where}: ${name} must be true or false`)
+
+    return undefined
+  }
+
+  return value === true ? true : undefined
+}
+
+/** What a stage entry sets for its stage: its label, whether it shows, whether Next skips it, and its place. */
+function readStageSetting(check: Check, where: string, entry: Doc, key: StageKey, settings: Map<StageKey, StageSetting>, moves: StageMove[]): void {
+  const label = asString(entry['label'])?.slice(0, 24)
+  const setting: StageSetting = { key }
+  if (label !== undefined) {
+    setting.label = label
+  }
+  const isHidden = flagOf(check, where, 'hidden', entry['hidden'])
+  if (isHidden !== undefined) {
+    setting.isHidden = isHidden
+  }
+  const isOptional = flagOf(check, where, 'optional', entry['optional'])
+  if (isOptional !== undefined) {
+    setting.isOptional = isOptional
+  }
+  settings.set(key, setting)
+  const before = stageKeyOf(check, where, 'before', entry['before'])
+  const after = stageKeyOf(check, where, 'after', entry['after'])
+  if (before !== undefined || after !== undefined) {
+    moves.push({ key, before, after })
+  }
+}
+
+/** The order of the flow: the default order, with each stage moved as board.yaml says, in its order. */
+const flowOrder = (moves: readonly StageMove[]): StageKey[] => {
+  let order = [...STAGE_KEYS]
+  for (const move of moves) {
+    const target = move.before ?? move.after
+    if (target === undefined || target === move.key) {
+      continue
+    }
+    order = order.filter(key => key !== move.key)
+    const at = order.indexOf(target)
+    order.splice(move.before !== undefined ? at : at + 1, 0, move.key)
+  }
+
+  return order
+}
+
 /**
  * The hints of one board.yaml, checked. `file` is the path the text came from. A file the
  * YAML reader refuses gives the default hints with a warning.
@@ -250,11 +318,26 @@ export const readHints = (schema: string, text: string, file: string): BoardHint
     check.warnings.push(`board.yaml version ${String(version)} is not known; the board reads it as version 1`)
   }
   const refs = readRefs(check, doc['refs'])
+  const settings = new Map<StageKey, StageSetting>()
+  const moves: StageMove[] = []
   for (const [index, stage] of (Array.isArray(doc['stages']) ? doc['stages'] : []).entries()) {
     if (!isDoc(stage)) {
       continue
     }
     const collects = asString(stage['collects'])
+    const where = `stages[${index}]`
+    // An entry without `collects` sets a stage of the board, which its id names.
+    if (collects === undefined) {
+      const id = asString(stage['id'])
+      const key = STAGE_KEYS.find(candidate => candidate === id)
+      if (key === undefined) {
+        check.warnings.push(`${where}: "${id ?? ''}" is no stage of the board; a new stage needs collects`)
+        continue
+      }
+      readStageSetting(check, where, stage, key, settings, moves)
+      continue
+    }
+    readStageSetting(check, where, stage, collects === 'design' ? 'design' : 'plan', settings, moves)
     const label = (asString(stage['label']) ?? asString(stage['id']) ?? collects ?? 'Stage').slice(0, 24)
     const section = asString(stage['section'])
     if (section === undefined || section.trim() === '') {
@@ -289,6 +372,7 @@ export const readHints = (schema: string, text: string, file: string): BoardHint
       check.warnings.push(`stages[${index}]: collects "${collects ?? ''}" is not known, or a second stage collects it`)
     }
   }
+  hints.flow = flowOrder(moves).map(key => settings.get(key) ?? { key })
   hints.verdicts = readVerdicts(check, doc['artifacts'])
   hints.commits = readCommits(check, doc['commits'])
   const verify = isDoc(doc['verify']) ? doc['verify'] : {}

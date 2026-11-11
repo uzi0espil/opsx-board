@@ -8,12 +8,13 @@ import type { GroupView, Stage, StageState } from './stages/base'
 
 export type Elements = ReturnType<EngineInterface['ui']['resolve']>
 
-export const STAGE_GLYPH: Record<StageState, string> = { done: '✔', active: '▶', pending: '○', blocked: '✖', na: '–' }
+export const STAGE_GLYPH: Record<StageState, string> = { done: '✔', active: '▶', pending: '○', blocked: '✖', partial: '◐', na: '–' }
 export const STAGE_COLOR: Record<StageState, string | undefined> = {
   done: 'success',
   active: 'warning',
   pending: undefined,
   blocked: 'error',
+  partial: 'suggestion',
   na: undefined,
 }
 export const GROUP_GLYPH: Record<GroupView['state'], string> = { done: '✔', running: '▶', paused: '‖', partial: '◐', pending: '○' }
