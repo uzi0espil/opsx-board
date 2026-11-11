@@ -50,6 +50,22 @@ Add its ref type to `WorkItemRef` in `types/index.d.ts` and the provider to `PRO
 `Io`, which reads a file and runs a command by argv (`hooks/io.ts`). The engine follows `$`
 only through calls it can resolve, and a provider is called through an object.
 
+## Add a kind of stage or a code host
+
+A stage, such as Apply, is a module in `hooks/stages/` that fills in `StageKind` of
+`hooks/stages/base.ts`:
+
+- `evaluate` works out its state from the evidence of the change and the session, on its own.
+- `next` offers the step that moves it on, when its condition holds. Next offers the step of
+  the first stage of the flow that has one.
+- `section` draws its part of the pane, or `shipRows` its rows of the shared "& ship" section.
+
+Add it to `STAGES` in `hooks/stages/index.ts`. A stage is pure: it takes no `$`.
+
+A code host, such as GitLab, is a module in `hooks/hosts/` that fills in `PrHostReader` of
+`hooks/hosts/base.ts`: its words, its CLI, and how it finds a pull request. Add it to `HOSTS`
+in `hooks/hosts/index.ts`. A host gets `Io`, as a provider does.
+
 ## Pull requests
 
 - One change per pull request.

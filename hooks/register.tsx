@@ -35,7 +35,11 @@ import {
   writeLedger,
   zeroUsage,
 } from './ledger'
-import { currentStage, findingsNote, groupViews, isApplyRun, isDesigning, isExploring, phaseOfStage, prWords, stagesOf, statusLine } from './model'
+import { currentStage, phaseOfStage, statusLine } from './model'
+import { stagesOf } from './stages'
+import { groupViews } from './stages/apply'
+import { findingsNote, isApplyRun, isDesigning, isExploring } from './stages/evidence'
+import { prWords } from './hosts'
 import {
   changeFromArgs,
   changeFromBranch,

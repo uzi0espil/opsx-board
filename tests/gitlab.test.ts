@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { fromMergeRequest } from '../hooks/gitlab'
-import { prWords } from '../hooks/model'
+import { prWords } from '../hooks/hosts'
+import { fromMergeRequest } from '../hooks/hosts/gitlab'
 
 describe('GitLab merge requests', () => {
   const page = 'https://gitlab.example.com/o/r/-/merge_requests/12'
