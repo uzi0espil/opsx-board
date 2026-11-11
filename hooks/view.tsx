@@ -25,7 +25,8 @@ import type {
 } from '../types'
 import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf, zeroUsage } from './ledger'
 import type { GroupView, Stage, StageState } from './model'
-import { currentStage, exploreRunsOf, groupViews, isExploring, isRunning, isViewInReview, isViewOpen, nextStep, prWords, stageText, stagesOf } from './model'
+import { currentStage, exploreRunsOf, groupViews, isExploring, isRunning, isViewInReview, isViewOpen, nextStep, stageText, stagesOf } from './model'
+import { prWords } from './hosts'
 import { formatDuration, formatTokens, reflowTables } from './parse'
 
 type Engine = EngineInterface

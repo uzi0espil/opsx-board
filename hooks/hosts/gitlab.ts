@@ -1,11 +1,8 @@
-// The GitLab provider: the merge request of a branch, and the one that merged an archived change,
-// read with `glab`. It runs `glab --version`, `glab auth status`, and `glab api` GET requests
-// only, as an argument list with no shell. `:id` stands for the project of the working directory.
-import type { EngineInterface } from 'claude-code'
-
-import type { PullRequest } from '../types'
-
-type Engine = EngineInterface
+// GitLab as the host of the pull requests, its merge requests, read with `glab`. It runs `glab
+// --version`, `glab auth status`, and `glab api` GET requests only, as an argument list with no
+// shell. `:id` stands for the project of the working directory.
+import type { PullRequest } from '../../types'
+import type { ArchiveCommit, Io, PrHostReader } from './base'
 
 /** How long a failed `glab --version` stands before the board asks again. */
 const GLAB_RETRY_MS = 300_000
@@ -14,14 +11,14 @@ const GLAB_RETRY_MS = 300_000
 let glabCheck: { at: number; isInstalled: boolean } | undefined
 const glabHosts = new Map<string, boolean>()
 
-async function glab($: Engine, args: readonly string[], cwd: string) {
-  return $.process.run(['glab', ...args], { cwd, timeoutMs: 20_000 }).catch(() => undefined)
+async function glab(io: Io, args: readonly string[], cwd: string) {
+  return io.run(['glab', ...args], cwd)
 }
 
 /** Whether `glab` runs at all. A yes stands for the session; a no is asked again after a while. */
-export async function hasGlab($: Engine, cwd: string, now: number): Promise<boolean> {
+async function hasGlab(io: Io, cwd: string, now: number): Promise<boolean> {
   if (glabCheck === undefined || (!glabCheck.isInstalled && now - glabCheck.at > GLAB_RETRY_MS)) {
-    const ran = await glab($, ['--version'], cwd)
+    const ran = await glab(io, ['--version'], cwd)
     glabCheck = { at: now, isInstalled: ran?.exitCode === 0 }
   }
 
@@ -32,12 +29,12 @@ export async function hasGlab($: Engine, cwd: string, now: number): Promise<bool
  * Whether `glab` is logged in to a host whose name does not tell its kind, such as a GitLab
  * server with a name of its own. Asked once per host and session.
  */
-export async function isGlabHost($: Engine, cwd: string, host: string): Promise<boolean> {
+async function isGlabHost(io: Io, cwd: string, host: string): Promise<boolean> {
   const known = glabHosts.get(host)
   if (known !== undefined) {
     return known
   }
-  const ran = await glab($, ['auth', 'status', '--hostname', host], cwd)
+  const ran = await glab(io, ['auth', 'status', '--hostname', host], cwd)
   const isLoggedIn = ran?.exitCode === 0
   glabHosts.set(host, isLoggedIn)
 
@@ -61,8 +58,8 @@ export const fromMergeRequest = (json: unknown): PullRequest | undefined => {
 }
 
 /** A GET request of the GitLab API, as JSON; undefined when `glab` fails. */
-async function api($: Engine, endpoint: string, cwd: string): Promise<unknown> {
-  const ran = await glab($, ['api', endpoint], cwd)
+async function api(io: Io, endpoint: string, cwd: string): Promise<unknown> {
+  const ran = await glab(io, ['api', endpoint], cwd)
   if (ran?.exitCode !== 0) {
     return undefined
   }
@@ -74,12 +71,12 @@ async function api($: Engine, endpoint: string, cwd: string): Promise<unknown> {
 }
 
 /** The merge request of a branch: its newest, in any state. */
-export async function branchMergeRequest($: Engine, cwd: string, branch: string): Promise<PullRequest | undefined> {
+async function branchMergeRequest(io: Io, cwd: string, branch: string): Promise<PullRequest | undefined> {
   if (branch === 'main' || branch === 'HEAD') {
     return undefined
   }
   const query = `source_branch=${encodeURIComponent(branch)}&order_by=created_at&sort=desc&per_page=1`
-  const found = await api($, `projects/:id/merge_requests?${query}`, cwd)
+  const found = await api(io, `projects/:id/merge_requests?${query}`, cwd)
 
   return Array.isArray(found) ? fromMergeRequest(found[0]) : undefined
 }
@@ -88,21 +85,46 @@ export async function branchMergeRequest($: Engine, cwd: string, branch: string)
  * The merge request of a commit, as GitLab relates them: the one that merged it, else an open
  * one, such as that of a change archived on its branch before the merge.
  */
-export async function commitMergeRequest($: Engine, cwd: string, hash: string): Promise<PullRequest | undefined> {
+async function commitMergeRequest(io: Io, cwd: string, hash: string): Promise<PullRequest | undefined> {
   if (!/^[0-9a-f]{40}$/.test(hash)) {
     return undefined
   }
-  const found = await api($, `projects/:id/repository/commits/${hash}/merge_requests`, cwd)
+  const found = await api(io, `projects/:id/repository/commits/${hash}/merge_requests`, cwd)
   const requests = (Array.isArray(found) ? found : []).flatMap(item => fromMergeRequest(item) ?? [])
 
   return requests.find(request => request.state === 'MERGED') ?? requests.find(request => request.state === 'OPEN') ?? requests[0]
 }
 
 /** A merge request by its `iid`, as `glab` reads it now. */
-export async function viewMergeRequest($: Engine, cwd: string, number: number): Promise<PullRequest | undefined> {
+async function viewMergeRequest(io: Io, cwd: string, number: number): Promise<PullRequest | undefined> {
   if (!Number.isSafeInteger(number) || number < 1) {
     return undefined
   }
 
-  return fromMergeRequest(await api($, `projects/:id/merge_requests/${number}`, cwd))
+  return fromMergeRequest(await api(io, `projects/:id/merge_requests/${number}`, cwd))
+}
+
+export const gitlabHost: PrHostReader = {
+  name: 'gitlab',
+  words: { label: 'MR', name: 'merge request', title: 'Merge request', ref: number => `!${number}` },
+  isInstalled: hasGlab,
+  isLoggedIn: isGlabHost,
+  ofBranch: (io, cwd, branch) => branchMergeRequest(io, cwd, branch),
+  view: viewMergeRequest,
+
+  /**
+   * GitLab relates a commit to its merge requests, so the commit that archived the change finds
+   * the merge request that archived it. A change archived on the main branch after its merge,
+   * such as by a CI job, has an archive commit of no merge request: then the last commit that
+   * added or changed a file of its active folder finds the merge request that merged it.
+   */
+  async ofArchive(io: Io, cwd: string, archive: ArchiveCommit, change: string): Promise<PullRequest | undefined> {
+    const archiving = await commitMergeRequest(io, cwd, archive.hash)
+    if (archiving !== undefined) {
+      return archiving
+    }
+    const last = await io.run(['git', 'log', '-1', '--diff-filter=AM', '--format=%H', '--', `openspec/changes/${change}`], cwd)
+
+    return commitMergeRequest(io, cwd, last?.exitCode === 0 ? last.stdout.trim() : '')
+  },
 }

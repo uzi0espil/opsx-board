@@ -1,7 +1,8 @@
 // Pure: what stage a change is in, what runs, and what comes next. No `$` here.
 // OpenSpec gives Explore, Propose (the schema's artifacts), Apply, Verify, and Archive. The
 // board.yaml hints add the stages outside OpenSpec (Plan, Design) and the project's names.
-import type { AgentRun, BoardHints, DesignView, Live, Phase, PrHost, Report, Snapshot, TaskGroup } from '../types'
+import type { AgentRun, BoardHints, DesignView, Live, Phase, Report, Snapshot, TaskGroup } from '../types'
+import { prWords } from './hosts'
 import { agentTokens } from './ledger'
 import { changeFromArgs, countDone, formatTokens, phaseOfCommand } from './parse'
 
@@ -33,23 +34,6 @@ export type GroupView = {
 }
 
 const RECENT_MS = 30 * 60 * 1000
-
-/**
- * The words for the pull request of a host: GitLab calls it a merge request, MR, and numbers it
- * `!N`. A snapshot without a host keeps the GitHub words.
- */
-export type PrWords = {
-  label: 'PR' | 'MR'
-  name: 'pull request' | 'merge request'
-  /** The name at the start of a sentence. */
-  title: 'Pull request' | 'Merge request'
-  ref: (number: number) => string
-}
-
-export const prWords = (host: PrHost | undefined): PrWords =>
-  host === 'gitlab'
-    ? { label: 'MR', name: 'merge request', title: 'Merge request', ref: number => `!${number}` }
-    : { label: 'PR', name: 'pull request', title: 'Pull request', ref: number => `#${number}` }
 
 export const isRunning = (agent: AgentRun): boolean => agent.status === 'running'
 

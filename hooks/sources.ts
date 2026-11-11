@@ -2,20 +2,16 @@
 // board.yaml hints, the files the hints name, git, gh, and glab. Every read goes through `$`.
 import type { EngineInterface } from 'claude-code'
 
-import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, PrHost, PullRequest, Snapshot, TaskGroup, Verdict } from '../types'
-import { closingRefs, hasGh, isGhHost } from './github'
-import { ioOf } from './io'
-import { branchMergeRequest, commitMergeRequest, hasGlab, isGlabHost, viewMergeRequest } from './gitlab'
+import type { ArtifactRow, BoardHints, DesignHints, DesignRun, DesignView, Snapshot, TaskGroup, Verdict } from '../types'
+import { readPullRequest } from './hosts'
 import {
   classifyCommits,
-  hostKind,
   parseCreated,
   parseDecisions,
   parseJson,
   parseTasks,
   parseVisualDesign,
   readVerdict,
-  remoteHost,
 } from './parse'
 import { collectPlan, planFiles, planItems } from './providers'
 import { isPrClosing } from './providers/github'
@@ -385,132 +381,11 @@ async function collectVerdicts($: Engine, dir: string, artifacts: readonly Artif
   return verdicts
 }
 
-/** The pull request of a branch; with `withCloses`, also the issues it closes. */
-export async function fetchPullRequest($: Engine, cwd: string, branch: string, withCloses = false): Promise<PullRequest | undefined> {
-  if (branch === 'main' || branch === 'HEAD') {
-    return undefined
-  }
-  const fields = withCloses ? 'number,state,url,closingIssuesReferences' : 'number,state,url'
-  const argv = ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', fields, '--limit', '1']
-  const ran = await run($, argv, cwd)
-  if (ran?.exitCode !== 0) {
-    return undefined
-  }
-  try {
-    const found = (JSON.parse(ran.stdout) as (PullRequest & { closingIssuesReferences?: unknown })[])[0]
-    if (found === undefined) {
-      return undefined
-    }
-    const pr: PullRequest = { number: found.number, state: found.state, url: found.url }
-
-    return withCloses ? { ...pr, closes: closingRefs(found.closingIssuesReferences) } : pr
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * The pull request of a branch whose own commits hold a commit. A branch can carry the commits
- * of more than one change, so the commit must be one of the pull request's own.
- */
-async function branchPullRequest($: Engine, cwd: string, branch: string, hash: string): Promise<PullRequest | undefined> {
-  if (branch === 'main' || branch === 'HEAD') {
-    return undefined
-  }
-  const argv = ['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,url,commits', '--limit', '1']
-  const ran = await run($, argv, cwd)
-  try {
-    const found = ran?.exitCode === 0 ? (JSON.parse(ran.stdout) as (PullRequest & { commits?: { oid?: unknown }[] })[])[0] : undefined
-
-    return found !== undefined && (found.commits ?? []).some(commit => commit.oid === hash)
-      ? { number: found.number, state: found.state, url: found.url }
-      : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * The pull request that merged an archived change: the squash commit that added its archive
- * folder names it as `(#N)`, and `gh` gives that pull request's URL. In a checkout of the
- * change's own branch, the commit that added the folder has no number: the pull request of
- * the branch counts when its commits hold that commit. GitLab relates a commit to its merge
- * requests itself, so on GitLab a commit finds the merge request: the archive commit when the
- * merge request archived the change. A change archived on the main branch after its merge, such
- * as by a CI job, has an archive commit of no merge request. Then the last commit that added or
- * changed a file of its active folder finds the merge request that merged the change.
- */
-async function mergedPullRequest(
-  $: Engine,
-  cwd: string,
-  change: string,
-  archivedAs: string,
-  branch: string | undefined,
-  host: PrHost,
-): Promise<PullRequest | undefined> {
-  const path = `openspec/changes/archive/${archivedAs}`
-  const log = await run($, ['git', 'log', '-1', '--diff-filter=A', '--format=%H%x09%s', '--', path], cwd)
-  const [hash = '', subject = ''] = (log?.exitCode === 0 ? log.stdout.trim() : '').split('\t')
-  if (host === 'gitlab') {
-    const archiving = await commitMergeRequest($, cwd, hash)
-    if (archiving !== undefined) {
-      return archiving
-    }
-    const last = await run($, ['git', 'log', '-1', '--diff-filter=AM', '--format=%H', '--', `openspec/changes/${change}`], cwd)
-
-    return commitMergeRequest($, cwd, last?.exitCode === 0 ? last.stdout.trim() : '')
-  }
-  // The last `(#N)` of the subject; a `[skip ci]` may follow it.
-  const number = [...subject.matchAll(/\(#(\d+)\)/g)].at(-1)?.[1]
-  if (number === undefined) {
-    return branch === undefined || !/^[0-9a-f]{40}$/.test(hash) ? undefined : branchPullRequest($, cwd, branch, hash)
-  }
-
-  return viewPullRequest($, cwd, Number(number))
-}
-
-/** A pull request by its number, as `gh` reads it now; the issues it closes stay with the caller. */
-async function viewPullRequest($: Engine, cwd: string, number: number): Promise<PullRequest | undefined> {
-  if (!Number.isSafeInteger(number) || number < 1) {
-    return undefined
-  }
-  const ran = await run($, ['gh', 'pr', 'view', String(number), '--json', 'number,state,url'], cwd)
-  try {
-    return ran?.exitCode === 0 ? (JSON.parse(ran.stdout) as PullRequest) : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * The host whose pull requests the board reads, from the `origin` remote: the host its name
- * tells, GitHub or GitLab, when that host's CLI is installed. A host whose name tells neither is
- * the one whose CLI is logged in to it, `gh` first. None without a remote or such a CLI.
- */
-async function readPrHost($: Engine, cwd: string, now: number): Promise<PrHost> {
-  const ran = await run($, ['git', 'remote', 'get-url', 'origin'], cwd)
-  const host = ran?.exitCode === 0 ? remoteHost(ran.stdout) : undefined
-  if (host === undefined) {
-    return 'none'
-  }
-  const kind = hostKind(host)
-  if (kind !== undefined) {
-    const isInstalled = kind === 'github' ? await hasGh(ioOf($), cwd, now) : await hasGlab($, cwd, now)
-
-    return isInstalled ? kind : 'none'
-  }
-  if ((await hasGh(ioOf($), cwd, now)) && (await isGhHost(ioOf($), cwd, host))) {
-    return 'github'
-  }
-
-  return (await hasGlab($, cwd, now)) && (await isGlabHost($, cwd, host)) ? 'gitlab' : 'none'
-}
-
 export type GitOptions = { isGitDue: boolean; isPrDue: boolean; hints: BoardHints; archivedAs?: string; now: number }
 
 /**
- * The branch, the change's commits, the host of its pull request, and the pull request; what is
- * not due comes from `previous`. Without a host to read, there is no pull request.
+ * The branch, the change's commits, the host of its pull request, and the pull request (see
+ * ./hosts); what is not due comes from `previous`.
  */
 export async function collectGit(
   $: Engine,
@@ -527,22 +402,15 @@ export async function collectGit(
     const log = await run($, ['git', 'log', '-n', '400', '--format=%h%x09%s'], cwd)
     commits = log?.exitCode === 0 ? classifyCommits(log.stdout, change, hints.commits) : commits
   }
-  // Read with git, so the PR stage hides from the first snapshot on, and a remote added later shows.
-  const prHost = isGitDue || previous?.prHost === undefined ? await readPrHost($, cwd, now) : previous.prHost
-  const isPrRead = prHost !== 'none'
-  const isGitlab = prHost === 'gitlab'
-  let pr = previous?.pr
-  if (isPrRead && archivedAs === undefined && isPrDue && branch !== undefined) {
-    const found = isGitlab ? await branchMergeRequest($, cwd, branch) : await fetchPullRequest($, cwd, branch, isPrClosing(hints.plan))
-    pr = found ?? pr
-  }
-  if (isPrRead && archivedAs !== undefined && pr === undefined && isGitDue) {
-    pr = await mergedPullRequest($, cwd, change, archivedAs, branch, prHost)
-  } else if (isPrRead && archivedAs !== undefined && pr?.state === 'OPEN' && isPrDue) {
-    // The change was archived on its branch before the merge: read the pull request until it closes.
-    const viewed = isGitlab ? await viewMergeRequest($, cwd, pr.number) : await viewPullRequest($, cwd, pr.number)
-    pr = viewed === undefined ? pr : { ...pr, ...viewed }
-  }
+  const { pr, prHost } = await readPullRequest($, cwd, previous, {
+    change,
+    branch,
+    archivedAs,
+    isGitDue,
+    isPrDue,
+    isPrClosing: isPrClosing(hints.plan),
+    now,
+  })
 
   return { branch, commits, pr, prHost }
 }
