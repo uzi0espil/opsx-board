@@ -1,33 +1,22 @@
-// The board pane: the stage rail, then one section per stage, the agents, and the next
-// step. Every row acts on a click: an artifact opens in the reader view of the same pane, a
-// design and the pull request in the browser. A task group row folds its tasks, and its
-// agent cell opens the agent's session. register.tsx reads the session values (so the
-// drawing subscribes to them) and hands them here with the actions that write them.
+// The board pane: the header card, the stage rail, then the section of each stage, the agents,
+// the shared "& ship" section, and the next step. Each stage draws its own section (./stages);
+// the pane frames them. Every row acts on a click: an artifact opens in the reader view of the
+// same pane, a design and the pull request in the browser. register.tsx reads the session
+// values (so the drawing subscribes to them) and hands them here with the actions that write them.
 import type { EngineInterface, RenderChildren, RenderInput } from 'claude-code'
 
-import type {
-  AgentRun,
-  ArtifactRow,
-  Binding,
-  BoardHints,
-  DesignView,
-  Flags,
-  Live,
-  MainUsage,
-  Others,
-  PlanningItem,
-  ReaderDoc,
-  Report,
-  SessionFigures,
-  Snapshot,
-  Usage,
-  Verdict,
-} from '../types'
-import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf, zeroUsage } from './ledger'
-import type { GroupView, Stage, StageState } from './model'
-import { currentStage, exploreRunsOf, groupViews, isExploring, isRunning, isViewInReview, isViewOpen, nextStep, stageText, stagesOf } from './model'
+import type { AgentRun, Binding, BoardHints, Flags, Live, MainUsage, Others, PlanningItem, ReaderDoc, Report, SessionFigures, Snapshot, Usage } from '../types'
 import { prWords } from './hosts'
+import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf } from './ledger'
+import { currentStage, stageText } from './model'
 import { formatDuration, formatTokens, reflowTables } from './parse'
+import { STAGES, flowOf, nextStep, stageKind } from './stages'
+import type { PaneContext, StageKind, StageState } from './stages'
+import { groupViews } from './stages/apply'
+import { stageOf } from './stages/base'
+import { exploreRunsOf, isExploring, isRunning } from './stages/evidence'
+import { INDENT, RIGHT_INSET, STAGE_COLOR, STAGE_GLYPH, elapsed, fit } from './ui'
+import type { Elements, Kit } from './ui'
 
 type Engine = EngineInterface
 
@@ -54,7 +43,7 @@ export type PaneActions = {
   pick: (change: string) => Promise<void>
   /** Shows a file or a text in the reader view of the pane. */
   read: (doc: ReaderDoc) => Promise<void>
-  /** Shows a planning item's block from its authoritative file in the reader view. */
+  /** Shows a planning item as its provider decides: in the reader view, or in the browser. */
   readPlanning: (item: PlanningItem) => Promise<void>
   /** Opens a URL in the browser, or a file in its default app. */
   openExternal: (target: string, what: string) => Promise<void>
@@ -66,128 +55,7 @@ export type ReaderActions = {
   openExternal: (target: string, what: string) => Promise<void>
 }
 
-const STAGE_GLYPH: Record<StageState, string> = { done: '✔', active: '▶', pending: '○', blocked: '✖', na: '–' }
-const STAGE_COLOR: Record<StageState, string | undefined> = {
-  done: 'success',
-  active: 'warning',
-  pending: undefined,
-  blocked: 'error',
-  na: undefined,
-}
-const GROUP_GLYPH: Record<GroupView['state'], string> = { done: '✔', running: '▶', paused: '‖', partial: '◐', pending: '○' }
-const GROUP_COLOR: Record<GroupView['state'], string | undefined> = {
-  done: 'success',
-  running: 'warning',
-  paused: 'warning',
-  partial: 'suggestion',
-  pending: undefined,
-}
-const TASK_GLYPH: Record<string, string> = { x: '✔', '~': '◐', '-': '✕', '!': '✖', ' ': '○' }
-const VERDICT_COLOR: Record<Verdict['level'], string> = { ok: 'success', warn: 'warning', block: 'error' }
-const MARK_COLOR: Record<string, string | undefined> = { x: 'success', '~': 'warning', '!': 'error' }
-
-
-// Layout, in character cells: section bodies sit under their header, and the tasks and
-// spec files under their row, each with a tree connector.
-const INDENT = 2
-const TREE_INDENT = 5
-// The right-hand notes and the row columns end this far from the pane edge, under the end of the stage chip.
-const RIGHT_INSET = 2
-
-const clip = (text: string, width: number): string =>
-  width <= 1 ? text.slice(0, Math.max(0, width)) : text.length <= width ? text : `${text.slice(0, width - 1)}…`
-
-const fit = (text: string, width: number): string => clip(text, width).padEnd(Math.max(0, width))
-
-const barCells = (done: number, total: number, width: number): [number, number] => {
-  const cells = Math.max(4, width)
-  const filled = total === 0 ? 0 : Math.round((done / total) * cells)
-
-  return [filled, cells - filled]
-}
-
 const agentLabel = (agent: AgentRun): string => (agent.group !== undefined ? `${agent.type} · G${agent.group}` : agent.type)
-
-const elapsed = (agent: AgentRun, now: number): number =>
-  agent.durationMs ?? (agent.status === 'running' ? now - agent.startedAt : (agent.endedAt ?? now) - agent.startedAt)
-
-const artifactState = (artifact: ArtifactRow): StageState =>
-  artifact.status === 'done' ? 'done' : artifact.status === 'ready' ? 'active' : artifact.status === 'skipped' ? 'na' : 'pending'
-
-const designStep = (view: DesignView, isOpen: boolean, isInReview: boolean): string =>
-  !isOpen
-    ? `approved ${view.approvedAt ?? ''}${isInReview ? ' · in review' : ''}`
-    : view.approvedAt !== undefined
-      ? `needs an update (approved ${view.approvedAt}${view.updatedAt === undefined ? '' : `, updated ${view.updatedAt}`})`
-      : view.isNeedsDesign && !view.hasArtifact
-        ? 'needs-design'
-        : view.screenshots > 0
-          ? 'iterating'
-          : view.hasArtifact
-            ? 'drafting'
-            : 'not started'
-
-const branch = (index: number, count: number): string => (index === count - 1 ? '└ ' : '├ ')
-
-/** Word-wraps `text` to `width` cells; a word longer than a line is cut across lines. */
-export const wrapWords = (text: string, width: number): string[] => {
-  const size = Math.max(1, width)
-  const out: string[] = []
-  let line = ''
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    let rest = word
-    while (rest.length > size) {
-      if (line !== '') {
-        out.push(line)
-        line = ''
-      }
-      out.push(rest.slice(0, size))
-      rest = rest.slice(size)
-    }
-    if (line === '') {
-      line = rest
-    } else if (line.length + 1 + rest.length <= size) {
-      line = `${line} ${rest}`
-    } else {
-      out.push(line)
-      line = rest
-    }
-  }
-  if (line !== '') {
-    out.push(line)
-  }
-
-  return out
-}
-
-type Elements = ReturnType<Engine['ui']['resolve']>
-
-/**
- * C: a card that appears while its task row is hovered (the row and the card share a hover
- * `scope`). A floating Box paints over what comes before it and under what comes after, so
- * the card sits just above its row, over the earlier rows, and never over its own row. Each
- * line is padded to the card's width, so the card's spaces hide the text beneath it.
- */
-const hoverCard = (Box: Elements['Box'], Text: Elements['Text'], text: string, width: number, left: number, scope: string) => {
-  const inner = Math.max(10, width - 4)
-  const lines = wrapWords(text, inner).map(line => ` ${line.padEnd(inner)} `)
-
-  return (
-    <Box
-      position="absolute"
-      top={-(lines.length + 2)}
-      left={left}
-      width={inner + 4}
-      display="none"
-      hover={{ scope, display: 'flex' }}
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="suggestion"
-    >
-      <Text>{lines.join('\n')}</Text>
-    </Box>
-  )
-}
 
 /**
  * `← Main session` (hotkey `m`), while the main view shows an agent's session: a press shows
@@ -232,17 +100,14 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       .map(([phase]) => phase),
     ...(others.phases ?? []),
   ]
-  const stages = stagesOf(snap, live, changeAgents, now, seenPhases, hints)
+  const flow = flowOf(snap, live, changeAgents, now, seenPhases, hints)
+  const stages = flow.stages
   const views = groupViews(snap, changeAgents, reports, live, hints)
-  const next = nextStep(snap, stages, live, hints)
+  const next = nextStep(flow)
   const current = currentStage(stages)
 
   const isOpen = (key: string, byDefault: boolean): boolean => (folded[key] === undefined ? byDefault : !folded[key])
   const toggle = (key: string, byDefault: boolean) => () => void actions.setFolded(key, isOpen(key, byDefault))
-  const isGroupExpanded = (view: GroupView): boolean =>
-    expanded[view.group.num] ?? (view.state === 'running' || view.state === 'paused')
-  // A group row folds or unfolds its tasks, and nothing else.
-  const toggleGroup = (view: GroupView) => () => actions.setExpanded(view.group.num, !isGroupExpanded(view))
   // An agent cell or row opens the agent's transcript. `$.ui.view` is the press's first call:
   // the engine switches the view only while the call answers the person's press.
   const openAgent = (agent: AgentRun) => async () => {
@@ -290,6 +155,31 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
       </Text>
     )
 
+  const kit: Kit = { Box, Text, Button, body, section, noteText }
+  const isBound = change !== undefined && snap !== null && snap.change === change
+  const pane: PaneContext = {
+    ctx: flow.ctx,
+    isBound,
+    stages,
+    current,
+    views,
+    kit,
+    actions: {
+      read: actions.read,
+      readPlanning: actions.readPlanning,
+      openExternal: actions.openExternal,
+      setExpanded: actions.setExpanded,
+      toast: text => $.ui.toast(text),
+      openAgent,
+    },
+    expanded,
+    main,
+    usageKey,
+    changeAgents,
+  }
+  // The section a stage draws, from its own state.
+  const draw = (kind: StageKind | undefined) => (kind?.section === undefined ? null : kind.section(pane, stageOf(stages, kind.key)))
+
   const nextCard =
     next === undefined ? null : (
       <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="suggestion" paddingX={1}>
@@ -299,53 +189,6 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
         <Text dimColor wrap="truncate-end">{`fills the prompt · ${next.why}`}</Text>
       </Box>
     )
-
-  // A design row opens artifact.html in the browser; its "decisions" button opens decisions.md in the reader.
-  const designRow = (view: DesignView, createdAt: string | undefined) => {
-    const isViewPending = isViewOpen(view, createdAt)
-    // An approved view stays active while the session still designs it: the next step has not started.
-    const isInReview = isViewInReview(view, live, hints)
-    const state: StageState =
-      !isViewPending && !isInReview ? 'done' : view.isInSession || isInReview ? 'active' : view.isNeedsDesign ? 'blocked' : 'pending'
-    const parts = [
-      designStep(view, isViewPending, isInReview),
-      view.revisions > 0 ? `rev ${view.revisions}` : undefined,
-      view.screenshots > 0 ? `${view.screenshots} shots` : undefined,
-    ]
-    const artifactPath = view.artifactPath
-    const decisionsPath = view.decisionsPath
-    const openDesign = () =>
-      view.hasArtifact && artifactPath !== undefined
-        ? void actions.openExternal(artifactPath, `the ${view.view} design`)
-        : $.ui.toast(`${view.view} has no ${hints?.design?.open ?? 'design file'} yet`)
-    const hasDecisions = decisionsPath !== undefined && (view.approvedAt !== undefined || view.revisions > 0)
-
-    return (
-      <Box flexDirection="row" gap={2}>
-        <Button key={`design:${view.view}`} plain onPress={openDesign}>
-          <Text color={STAGE_COLOR[state]}>{`${STAGE_GLYPH[state]} `}</Text>
-          <Text bold>{` ${view.view}`}</Text>
-          <Text dimColor>{`  ${clip(parts.filter(Boolean).join(' · '), Math.max(10, body - view.view.length - 16))}`}</Text>
-        </Button>
-        {hasDecisions ? (
-          <Button
-            key={`decisions:${view.view}`}
-            plain
-            dimColor
-            onPress={() =>
-              void actions.read({
-                title: `${view.view} · ${decisionsPath?.split('/').at(-1) ?? 'decisions'}`,
-                path: decisionsPath,
-                from: `decisions:${view.view}`,
-              })
-            }
-          >
-            decisions
-          </Button>
-        ) : null}
-      </Box>
-    )
-  }
 
   const rail = (
     <Box paddingX={1} marginTop={1}>
@@ -364,43 +207,11 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
     </Box>
   )
 
-  // Explore: the topics this session explored for the bound change, and the tokens spent on them.
-  const exploreRuns = exploreRunsOf(live, change)
-  const explore = stages.find(stage => stage.key === 'explore')
-  const exploreTokens =
-    tokensOf(main[usageKey]?.['explore'] ?? zeroUsage()) +
-    changeAgents.filter(agent => agent.phase === 'explore').reduce((sum, agent) => sum + agentTokens(agent), 0)
-  const exploreSection =
-    explore === undefined || explore.state === 'na'
-      ? null
-      : section(
-          'explore',
-          'Explore',
-          explore.state,
-          explore.state === 'active',
-          noteText(exploreTokens > 0 ? `${formatTokens(exploreTokens)} tok` : undefined),
-          () =>
-            exploreRuns.length === 0 ? (
-              <Text dimColor>explored in another session</Text>
-            ) : (
-              exploreRuns.slice(-5).map((run, index, shown) => {
-                const isLive = explore.state === 'active' && index === shown.length - 1
-
-                return (
-                  <Text wrap="truncate-end">
-                    <Text color={isLive ? 'warning' : 'success'}>{`${isLive ? '▶' : '✔'}  `}</Text>
-                    <Text bold={isLive}>{run.topic === '' ? 'open exploration' : run.topic}</Text>
-                    <Text dimColor>{`  ${formatDuration(now - run.at)} ago`}</Text>
-                  </Text>
-                )
-              })
-            ),
-        )
+  const exploreSection = draw(stageKind('explore'))
 
   // ── no change bound yet (or design mode, whose snapshot has an empty change) ──
-  if (change === undefined || snap === null || snap.change !== change) {
-    const designs = snap?.designs ?? []
-    const hasPreChangeWork = isExploring(live) || exploreRuns.length > 0 || live.designRuns.length > 0
+  if (!isBound || snap === null || change === undefined) {
+    const hasPreChangeWork = isExploring(live) || exploreRunsOf(live, change).length > 0 || live.designRuns.length > 0
     const commands = ['/opsx:explore', ...(hints?.design?.command === undefined ? [] : [`/${hints.design.command}`]), '/opsx:propose']
     const message =
       binding.candidates.length > 1
@@ -435,9 +246,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
             ))}
           </Box>
         ) : null}
-        {designs.length === 0
-          ? null
-          : section('design', hints?.design?.label ?? 'Design', undefined, true, null, () => designs.map(view => designRow(view, undefined)))}
+        {draw(stageKind('design'))}
         {nextCard}
       </Box>
     )
@@ -505,235 +314,6 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
   )
 
   // ── sections ───────────────────────────────────────────────────────────
-  const stageOf = (key: Stage['key']) => stages.find(stage => stage.key === key)
-  const plan = stageOf('plan')
-  const design = stageOf('design')
-  const propose = stageOf('propose')
-  const apply = stageOf('apply')
-  const doneTasks = views.reduce((sum, view) => sum + view.done, 0)
-  const allTasks = views.reduce((sum, view) => sum + view.total, 0)
-  const isApplyCurrent = current?.key === 'apply' || current?.key === 'verify'
-
-  const planSection =
-    snap.planning.length === 0 && snap.planningNone === undefined
-      ? null
-      : section('plan', plan?.label ?? 'Plan', plan?.state, plan?.state === 'active', null, () => [
-          ...snap.planning.map(item => {
-            const mark = item.mark ?? '?'
-            // An item that the proposal does not name says where the board found it.
-            const via = item.via === 'branch' ? ' · branch' : item.via === 'pr' ? ' · closed by the PR' : ''
-
-            return (
-              <Button key={`plan:${item.id}`} plain onPress={() => void actions.readPlanning(item)}>
-                <Text color={mark === '?' ? 'error' : MARK_COLOR[mark]}>{`[${mark}]`}</Text>
-                <Text bold>{` ${item.id}`}</Text>
-                <Text dimColor>{`  ${clip(item.title, Math.max(10, body - item.id.length - via.length - 8))}${via}`}</Text>
-              </Button>
-            )
-          }),
-          snap.planningNone === undefined ? null : <Text dimColor>{clip(`None — ${snap.planningNone}`, body)}</Text>,
-        ])
-
-  const designSection =
-    snap.designs.length === 0
-      ? null
-      : section('design', design?.label ?? 'Design', design?.state, design?.state !== 'done', noteText(design?.note), () =>
-          snap.designs.map(view => designRow(view, snap.createdAt)),
-        )
-
-  const artifactsDone = snap.artifacts.filter(artifact => artifact.status === 'done').length
-  const verdicts = snap.verdicts ?? []
-  const isSpecsOpen = expanded['specs'] === true
-  // An artifact row opens its file in the reader; the specs row lists its spec files.
-  const openArtifact = (artifact: ArtifactRow) => () => {
-    if (artifact.status !== 'done') {
-      $.ui.toast(`${artifact.id} is not written yet`)
-      return
-    }
-    const output = artifact.outputPath ?? `${artifact.id}.md`
-    if (output.includes('*')) {
-      void actions.setExpanded('specs', !isSpecsOpen)
-      return
-    }
-    void actions.read({ title: `${output} · ${snap.change}`, path: `${snap.dir}/${output}`, from: `artifact:${artifact.id}` })
-  }
-  const proposeNote = (
-    <Text dimColor>
-      {`${artifactsDone}/${snap.artifacts.length} artifacts`}
-      {propose?.isInReview ? ' · in review' : ''}
-      {verdicts.flatMap(verdict => [' · ', <Text color={VERDICT_COLOR[verdict.level]}>{verdict.value}</Text>])}
-    </Text>
-  )
-  const idWidth = Math.max(...snap.artifacts.map(artifact => artifact.id.length), 8)
-  const proposeSection = section('propose', 'Propose', propose?.state, propose?.state !== 'done', proposeNote, () =>
-    snap.artifacts.flatMap(artifact => {
-      const state = artifactState(artifact)
-      const isGlob = (artifact.outputPath ?? '').includes('*')
-      const verdict = verdicts.find(item => item.artifact === artifact.id)
-      const detail =
-        verdict !== undefined
-          ? `${verdict.value}${verdict.note === undefined ? '' : ` (${verdict.note})`}`
-          : isGlob && snap.specsCount > 0
-            ? `${snap.specsCount} ${snap.specsCount === 1 ? 'file' : 'files'} ${isSpecsOpen ? '▾' : '▸'}`
-            : artifact.status === 'blocked' && (artifact.missing?.length ?? 0) > 0
-              ? `blocked · needs ${artifact.missing?.join(', ')}`
-              : artifact.status === 'blocked' || artifact.status === 'ready'
-                ? artifact.status
-                : ''
-      const row = (
-        <Button key={`artifact:${artifact.id}`} plain onPress={openArtifact(artifact)}>
-          <Text color={STAGE_COLOR[state]}>{`${STAGE_GLYPH[state]} `}</Text>
-          <Text>{` ${fit(artifact.id, idWidth)}`}</Text>
-          {detail === '' ? '' : <Text color={verdict === undefined ? undefined : VERDICT_COLOR[verdict.level]} dimColor={verdict === undefined}>{`  ${detail}`}</Text>}
-        </Button>
-      )
-      if (!isGlob || !isSpecsOpen) {
-        return [row]
-      }
-
-      return [
-        row,
-        <Box flexDirection="column" paddingLeft={TREE_INDENT - INDENT}>
-          {snap.specs.map((name, index) => (
-            <Button
-              key={`spec:${name}`}
-              plain
-              onPress={() =>
-                void actions.read({
-                  title: `specs/${name}/spec.md · ${snap.change}`,
-                  path: `${snap.dir}/specs/${name}/spec.md`,
-                  from: `spec:${name}`,
-                })
-              }
-            >
-              <Text dimColor>{branch(index, snap.specs.length)}</Text>
-              {name}
-            </Button>
-          ))}
-        </Box>,
-      ]
-    }),
-  )
-
-  const [filled, empty] = barCells(doneTasks, allTasks, Math.min(20, Math.max(6, body - 40)))
-  const applyNote =
-    allTasks === 0 ? null : (
-      <Text>
-        <Text dimColor>{`${doneTasks}/${allTasks} `}</Text>
-        <Text color="success">{'█'.repeat(filled)}</Text>
-        <Text dimColor>{'░'.repeat(empty)}</Text>
-      </Text>
-    )
-  const right = Math.min(32, Math.max(14, Math.floor(body * 0.34)))
-  const titleWidth = Math.max(8, body - 16 - right)
-  const applySection =
-    views.length === 0
-      ? null
-      : section('apply', 'Apply', apply?.state, apply?.state !== 'done' || isApplyCurrent, applyNote, () =>
-          views.flatMap(view => {
-            const latest = view.agents.at(-1)
-            const tokens = view.agents.reduce((sum, agent) => sum + agentTokens(agent), 0)
-            const isLive = latest !== undefined && isRunning(latest)
-            const who =
-              latest === undefined
-                ? (view.commit ?? '')
-                : `${clip(latest.type, 16)} ${formatTokens(tokens)}${
-                    isLive ? ` ${formatDuration(elapsed(latest, now))}` : view.commit === undefined ? '' : ` ${view.commit}`
-                  }`
-            const head = [
-              <Text color={GROUP_COLOR[view.state]}>{`${GROUP_GLYPH[view.state]} `}</Text>,
-              <Text mono dimColor>{` ${view.group.num.padStart(2)} `}</Text>,
-              <Text mono bold={view.state === 'running'} dimColor={view.state === 'done'}>
-                {` ${fit(view.group.title, titleWidth)} `}
-              </Text>,
-              <Text mono color={view.state === 'done' ? 'success' : undefined} dimColor={view.state !== 'done'}>
-                {`${view.done}/${view.total}`.padStart(6)}
-              </Text>,
-            ]
-            const cell = (
-              <Text mono color={isLive ? 'warning' : undefined} dimColor={!isLive}>
-                {clip(who, right)}
-              </Text>
-            )
-            // The row folds its tasks; the agent cell, a press target of its own, opens the agent.
-            // With no agent, the cell holds the commit and is part of the row.
-            const row =
-              latest === undefined ? (
-                <Button key={`group:${view.group.num}`} plain onPress={toggleGroup(view)}>
-                  {head}
-                  {'  '}
-                  {cell}
-                </Button>
-              ) : (
-                <Box flexDirection="row" gap={2}>
-                  <Button key={`group:${view.group.num}`} plain onPress={toggleGroup(view)}>
-                    {head}
-                  </Button>
-                  <Button key={`group-agent:${view.group.num}`} plain onPress={openAgent(latest)}>
-                    {cell}
-                  </Button>
-                </Box>
-              )
-            if (!isGroupExpanded(view)) {
-              return [row]
-            }
-            const count = view.group.tasks.length
-            const rowWidth = body - (TREE_INDENT - INDENT)
-
-            return [
-              row,
-              <Box flexDirection="column" paddingLeft={TREE_INDENT - INDENT} marginBottom={1}>
-                {view.group.tasks.map((task, index) => {
-                  const isActive = view.runningTask === task.id && task.mark !== 'x'
-                  const glyph = isActive ? '▶' : (TASK_GLYPH[task.mark] ?? '○')
-                  const reporter = isActive ? `  ← ${latest?.type ?? 'agent'}` : ''
-                  // branch (2) + glyph and its gap (3) + " id " — where the task text starts.
-                  const lead = 5 + task.id.length + 2
-                  const textWidth = Math.max(10, rowWidth - lead - reporter.length)
-                  const isClipped = task.text.length > textWidth
-                  const flag = `task:${task.id}`
-                  const isTaskOpen = isClipped && expanded[flag] === true
-                  // A: an unfolded task wraps in place, its first line on the row, the rest under it.
-                  const wrapped = isTaskOpen ? wrapWords(task.text, textWidth) : [clip(task.text, textWidth)]
-
-                  const hasCard = isClipped && !isTaskOpen
-                  const scope = `opsx-task-${task.id}`
-
-                  return (
-                    // No key: this Box is no hover scope, so a pointer over the card (on this Box)
-                    // lights no task and the card hides, letting the row beneath take the hover.
-                    <Box flexDirection="column">
-                      <Button
-                        key={flag}
-                        plain
-                        hover={hasCard ? { scope } : undefined}
-                        onPress={() => (isClipped ? void actions.setExpanded(flag, !isTaskOpen) : undefined)}
-                      >
-                        <Text dimColor>{branch(index, count)}</Text>
-                        <Text color={isActive ? 'warning' : MARK_COLOR[task.mark]}>{`${glyph} `}</Text>
-                        <Text dimColor>{` ${task.id} `}</Text>
-                        <Text bold={isActive} dimColor={task.mark === 'x'}>
-                          {wrapped[0] ?? ''}
-                        </Text>
-                        {reporter === '' ? '' : <Text color="warning">{reporter}</Text>}
-                      </Button>
-                      {wrapped.slice(1).map(line => (
-                        <Box paddingLeft={lead}>
-                          <Text bold={isActive} dimColor={task.mark === 'x'}>
-                            {line}
-                          </Text>
-                        </Box>
-                      ))}
-                      {/* C: hovering a clipped, folded task floats its whole text over the rows above it. */}
-                      {hasCard ? hoverCard(Box, Text, task.text, Math.max(20, rowWidth - lead - 2), lead, scope) : null}
-                    </Box>
-                  )
-                })}
-              </Box>,
-            ]
-          }),
-        )
-
   const agentRows = changeAgents.filter(agent => agent.phase !== 'other' || isRunning(agent))
   const mainPhases = Object.entries(main[change] ?? {}).filter(([, usage]) => tokensOf(usage) > 0)
   const labelWidth = Math.max(12, Math.min(34, body - 42))
@@ -760,70 +340,14 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           ),
         ])
 
-  // Review and verify open their last report in the reader; the PR or MR opens in the browser.
-  const review = stageOf('verify')
-  const pr = stageOf('pr')
-  const words = prWords(snap.prHost)
-  const archive = stageOf('archive')
-  const fixCommit = snap.commits.find(commit => commit.kind === 'review-fix')
-  const shipRow = (key: string | undefined, stage: Stage, note: string | undefined, onPress?: () => void) => {
-    const content = [
-      <Text color={STAGE_COLOR[stage.state]}>{`${STAGE_GLYPH[stage.state]} `}</Text>,
-      <Text bold={stage.state !== 'pending'} dimColor={stage.state === 'pending'}>{` ${fit(stage.label, 8)}`}</Text>,
-      note === undefined ? '' : <Text dimColor>{clip(note, body - 12)}</Text>,
-    ]
+  // The stages after Apply share one section: each adds its rows.
+  const shipSection = section('ship', `${stageOf(stages, 'verify')?.label ?? 'Verify'} & ship`, undefined, true, null, () =>
+    STAGES.flatMap(kind => {
+      const stage = stageOf(stages, kind.key)
 
-    return key === undefined || onPress === undefined ? (
-      <Text wrap="truncate-end">{content}</Text>
-    ) : (
-      <Button key={key} plain onPress={onPress}>
-        {content}
-      </Button>
-    )
-  }
-  const reviewer = hints?.reviewAgent
-  // The stage row shows the review agent's report, else the report of /opsx:verify. The verify
-  // row shows the second one, when both ran.
-  const stageReport =
-    live.reviewReport !== undefined && reviewer !== undefined
-      ? { title: `${reviewer} · ${snap.change}`, text: live.reviewReport }
-      : live.verifyReport === undefined
-        ? undefined
-        : { title: `opsx:verify · ${snap.change}`, text: live.verifyReport }
-  const isVerifyRow = live.verifyVerdict !== undefined && live.verifyReport !== undefined && stageReport?.text !== live.verifyReport
-  const shipSection = section('ship', `${review?.label ?? 'Verify'} & ship`, undefined, true, null, () => [
-    review === undefined
-      ? null
-      : shipRow(
-          'review',
-          review,
-          review.note ??
-            (fixCommit ? `fixes ${fixCommit.hash}` : reviewer === undefined ? '/opsx:verify checks the change against its artifacts' : `${reviewer} runs before the ${words.name}`),
-          () =>
-            stageReport === undefined
-              ? $.ui.toast(`No ${reviewer ?? 'verify'} report in this session yet`)
-              : void actions.read({ ...stageReport, from: 'review' }),
-        ),
-    !isVerifyRow ? null : (
-      <Button
-        key="verify"
-        plain
-        onPress={() => void actions.read({ title: `opsx:verify · ${snap.change}`, text: live.verifyReport ?? '', from: 'verify' })}
-      >
-        <Text dimColor>{'· '}</Text>
-        <Text>{` ${fit('Verify', 8)}`}</Text>
-        <Text dimColor>{live.verifyVerdict}</Text>
-      </Button>
-    ),
-    pr === undefined
-      ? null
-      : shipRow('pr', pr, snap.pr === undefined ? pr.note : `${pr.note ?? ''} · open in the browser ↗`, () =>
-          snap.pr === undefined
-            ? $.ui.toast(`No ${words.name} for this branch yet`)
-            : void actions.openExternal(snap.pr.url, `${words.name} ${words.ref(snap.pr.number)}`),
-        ),
-    archive === undefined ? null : shipRow(undefined, archive, archive.note),
-  ])
+      return stage === undefined || kind.shipRows === undefined ? [] : kind.shipRows(pane, stage)
+    }),
+  )
 
   return (
     <Box flexDirection="column">
@@ -834,17 +358,13 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
           <Text color="warning" wrap="truncate-end">{`⚠  ${warning}`}</Text>
         </Box>
       ))}
-      {planSection}
-      {exploreSection}
-      {designSection}
-      {proposeSection}
-      {applySection}
+      {STAGES.map(draw)}
       {agentsSection}
       {shipSection}
       {nextCard}
       <Box paddingX={1} marginTop={1}>
         <Text dimColor italic wrap="truncate-end">
-          {`click a row · artifact, work item → reader · design, ${words.label} → browser · group → its tasks · agent → its session · task → full text`}
+          {`click a row · artifact, work item → reader · design, ${prWords(snap.prHost).label} → browser · group → its tasks · agent → its session · task → full text`}
         </Text>
       </Box>
     </Box>

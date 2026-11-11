@@ -23,7 +23,7 @@ import {
 import { planItems } from '../hooks/providers'
 import { findMarker, itemBlock } from '../hooks/providers/file'
 import { readHints } from '../hooks/schema'
-import { wrapWords } from '../hooks/view'
+import { wrapWords } from '../hooks/ui'
 import {
   ARCH_REVIEW_MD,
   DECISIONS_MD,
