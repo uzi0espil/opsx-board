@@ -1236,6 +1236,77 @@ describe('opsx-board', () => {
     await ui.unmount()
     expect(state.branch).toBe('main')
   })
+
+  test('the session binds the change it creates, and a change it writes while it has none', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    const files = { ...DEMO_FILES, [`${CWD}/openspec/changes/other-change/proposal.md`]: '## Why\n' }
+    const state = world(on, files, 'main')
+    on('command.run', () => ({ text: '' }))
+    on('tool.call', { tool: ['Bash', 'Write'] }, () => ({ result: '' }))
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const header = async () => (await ui.find({ type: 'Text', text: /^[a-z0-9-]+$/ }))?.text
+    expect(await ui.find({ key: 'pick:other-change' })).toBeDefined()
+
+    // A file the session writes in a change binds the session that has no change yet.
+    await $.tool.call({ tool: 'Write', file_path: `${CWD}/openspec/changes/other-change/design.md`, content: '## Context\n' })
+    await clock.advance(300)
+    expect(await header()).toBe('other-change')
+    // A file in another change moves no binding.
+    await $.tool.call({ tool: 'Write', file_path: `${CWD}/openspec/changes/demo-change/design.md`, content: '## Context\n' })
+    await clock.advance(300)
+    expect(await header()).toBe('other-change')
+
+    // `/opsx:propose` with a sentence names no change: the change its run creates binds.
+    await $.command.run(typed('opsx:propose', 'Task 86abc: read and disable the labels'))
+    state.files.set(`${CWD}/openspec/changes/label-read-86abc/.openspec.yaml`, 'schema: spec-driven\n')
+    await $.tool.call({ tool: 'Bash', command: 'openspec new change "label-read-86abc" 2>&1; openspec status --change "label-read-86abc" --json' })
+    await clock.advance(300)
+    expect(await header()).toBe('label-read-86abc')
+
+    // A pin holds: a change created after it does not move it.
+    await $.command.run(typed('opsx-board', 'demo-change'))
+    await clock.advance(300)
+    state.files.set(`${CWD}/openspec/changes/next-change/.openspec.yaml`, 'schema: spec-driven\n')
+    await $.tool.call({ tool: 'Bash', command: 'openspec new change next-change' })
+    await clock.advance(300)
+    expect(await header()).toBe('demo-change')
+    await ui.unmount()
+  })
+
+  test('the picker lists the newest changes first, and a search narrows them', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    // A file's time is its length: the longer proposal is the newer change.
+    const files: Record<string, string> = { ...DEMO_FILES }
+    for (let i = 1; i <= 13; i++) {
+      files[`${CWD}/openspec/changes/extra-${String(i).padStart(2, '0')}/proposal.md`] = '#'.repeat(i)
+    }
+    world(on, files, 'main')
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const picks = async () => (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pick:'))
+    const extras = (from: number, to: number) => Array.from({ length: from - to + 1 }, (_, i) => `pick:extra-${String(from - i).padStart(2, '0')}`)
+
+    // Fourteen changes: the twelve newest show, and the search can find the rest.
+    expect(await picks()).toEqual(['pick:demo-change', ...extras(13, 3)])
+    const more = async () => (await ui.find({ type: 'Text', text: /more · type to narrow$/ }))?.text
+    expect(await more()).toBe('+2 more · type to narrow')
+    await ui.input({ key: 'pick-search', text: 'EXTRA-0', kind: 'change' })
+    expect(await picks()).toEqual(extras(9, 1))
+    expect(await more()).toBeUndefined()
+    await ui.input({ key: 'pick-search', text: 'pdf', kind: 'change' })
+    expect(await picks()).toEqual([])
+    expect((await ui.find({ type: 'Text', text: /^No change matches/ }))?.text).toBe('No change matches “pdf”.')
+
+    // Enter picks the first match.
+    await ui.input({ key: 'pick-search', text: 'extra 1' })
+    await clock.advance(100)
+    expect((await ui.find({ type: 'Text', text: /^extra-13$/ }))?.text).toBe('extra-13')
+    expect(await ui.find({ key: 'pick-search' })).toBeUndefined()
+    await ui.unmount()
+  })
 })
 
 describe('opsx-board with other schemas', () => {

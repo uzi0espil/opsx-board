@@ -293,6 +293,30 @@ export const inferGroup = (text: string, groups: readonly TaskGroup[]): string |
 export const isChangeName = (name: string): boolean => NAME.test(name)
 
 /**
+ * The changes a shell command creates: each `openspec new change <name>` in it, as
+ * `/opsx:propose` and `/opsx:new` run it, with the name bare or quoted.
+ */
+export const createdChanges = (command: string): string[] =>
+  [...command.matchAll(/\bopenspec\s+new\s+change\s+["']?([^\s"';&|]+)/g)].map(match => match[1] ?? '').filter(isChangeName)
+
+/** The active change a file path lies in: `openspec/changes/<name>/...`, never the archive. */
+export const changeOfPath = (path: string): string | undefined => {
+  const name = /(?:^|\/)openspec\/changes\/([^/]+)\//.exec(path.replace(/\\/g, '/'))?.[1]
+
+  return name !== undefined && name !== 'archive' && isChangeName(name) ? name : undefined
+}
+
+/**
+ * The changes a search in the picker finds: those whose name holds every word of the
+ * search, in any case. An empty search finds them all.
+ */
+export const matchChanges = (names: readonly string[], query: string): string[] => {
+  const words = query.toLowerCase().split(/\s+/).filter(word => word !== '')
+
+  return names.filter(name => words.every(word => name.includes(word)))
+}
+
+/**
  * The change name an `/opsx:*` command names: a single kebab-case argument, as the
  * session-title hook reads `/opsx:propose <name>`. A sentence names no change.
  */

@@ -3,12 +3,15 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   changeFromArgs,
   changeFromBranch,
+  changeOfPath,
   classifyCommits,
   countFindings,
+  createdChanges,
   designFromArgs,
   hostKind,
   inferGroup,
   isChangeName,
+  matchChanges,
   parseCreated,
   parseDecisions,
   parseTasks,
@@ -192,6 +195,20 @@ describe('parse', () => {
     expect(changeFromBranch('worktree-demo-change', ['demo-change', 'other'])).toBe('demo-change')
     expect(changeFromBranch('feat/other', ['demo-change', 'other'])).toBe('other')
     expect(changeFromBranch('worktree-r2-wi-12-P2', ['demo-change'])).toBeUndefined()
+  })
+
+  test('the change a shell command creates or a file path lies in, and the picker search', async () => {
+    expect(createdChanges('openspec new change "csv-export" 2>&1; openspec status --change "csv-export" --json')).toEqual(['csv-export'])
+    expect(createdChanges("cd app && openspec new change 'csv-import' --schema spec-driven")).toEqual(['csv-import'])
+    expect(createdChanges('openspec new change ../outside')).toEqual([])
+    expect(createdChanges('openspec status --change csv-export --json')).toEqual([])
+    expect(changeOfPath('C:\\repo\\openspec\\changes\\csv-export\\proposal.md')).toBe('csv-export')
+    expect(changeOfPath('/repo/openspec/changes/csv-export/specs/csv/spec.md')).toBe('csv-export')
+    expect(changeOfPath('/repo/openspec/changes/archive/2026-10-01-csv-export/tasks.md')).toBeUndefined()
+    expect(changeOfPath('/repo/openspec/specs/csv/spec.md')).toBeUndefined()
+    expect(matchChanges(['csv-export', 'csv-import-86abc', 'gallery'], ' CSV 86abc ')).toEqual(['csv-import-86abc'])
+    expect(matchChanges(['csv-export', 'gallery'], '')).toEqual(['csv-export', 'gallery'])
+    expect(matchChanges(['csv-export', 'gallery'], 'pdf')).toEqual([])
   })
 
   test('the host of a remote URL, and the kind its name tells', async () => {

@@ -34,8 +34,22 @@ beside the transcript.
 
 ## Which change the pane shows
 
-Each session follows its own change: the argument of its last `/opsx:*` command, else the only
-active change in its folder, else the change its branch names, else the one picked in the pane.
+Each session follows its own change. These bind it:
+
+- The change that an `/opsx:*` command names, such as `/opsx:propose csv-export`. Also
+  `/opsx-board <change>`, which pins the pane to the change until `/opsx-board auto`.
+- The change that the session creates: an `openspec new change <name>` that it runs, as
+  `/opsx:propose` and `/opsx:new` do. This binds also when the command named no change, such as
+  a `/opsx:propose` that the model runs with a sentence. A pinned change stays.
+- Until one of those binds, the only active change in the folder, else the change that the
+  branch names.
+- While the session has no change yet, the first change that it writes a file in. A file
+  written in another change later moves nothing.
+- The change picked in the pane.
+
+The pane lists the active changes to pick from, newest first. A search field above the list
+narrows it to the changes whose name holds every word typed, in any case, and Enter picks the
+first of them. Without a search, the list shows the 12 newest.
 
 The board reads the folder that the session works in, and it follows the session into a worktree
 and out of it. A session can leave a worktree that still holds the bound change, for a folder
