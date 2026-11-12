@@ -31,8 +31,8 @@ not where the change stands. The board keeps that in view:
   issue in the pane.
 - **What a change costs.** Tokens per stage, added up over every session of the change.
 - **Your schema, your stages.** The board takes the stages from your OpenSpec schema. A
-  `board.yaml` adds a Plan stage of backlog items or GitHub issues, and a Design stage, and it
-  can rename, hide, move, or make optional any stage of the flow.
+  `board.yaml` adds a Plan stage of backlog items, GitHub issues, or ClickUp tasks, and a
+  Design stage, and it can rename, hide, move, or make optional any stage of the flow.
 
 ## How it works
 
@@ -57,9 +57,10 @@ pane. It follows the session into a worktree and out of it.
 
 ## Install
 
-You need Claude Code and the `openspec` CLI on the `PATH`. `gh` and `glab` are optional.
-Without the CLI of the repository's host, `gh` for GitHub or `glab` for GitLab, the board shows
-no PR stage. Without `gh`, GitHub issues show no state.
+You need Claude Code and the `openspec` CLI on the `PATH`. `gh`, `glab`, and `clickup` are
+optional. Without the CLI of the repository's host, `gh` for GitHub or `glab` for GitLab, the
+board shows no PR stage. Without `gh`, GitHub issues show no state, and without `clickup`,
+ClickUp tasks are links.
 
 In Claude Code 2.1.275 or later:
 
@@ -117,8 +118,8 @@ take work items from backlog files, and read the verdict of a review artifact. S
 
 ## What it touches
 
-- **Reads** the repository of the session, through the `openspec` CLI, git, `gh`, and `glab`, and
-  its own folder, `~/.claude/opsx-board/`.
+- **Reads** the repository of the session, through the `openspec` CLI, git, `gh`, `glab`, and
+  `clickup`, and its own folder, `~/.claude/opsx-board/`.
 - **Writes** only its token ledgers, under `~/.claude/opsx-board/`.
 - **Runs no workflow command.** Next fills the prompt; you decide to send it.
 - **Checks a `board.yaml` strictly**, because it comes with a repository: built-in providers
@@ -128,9 +129,9 @@ take work items from backlog files, and read the verdict of a review artifact. S
 
 ## Status
 
-Work in progress. Work items come from files of the repository or from GitHub issues, and a Jira
-provider comes next. See the [releases](https://github.com/uzi0espil/opsx-board/releases) for
-what changed.
+Work in progress. Work items come from files of the repository, GitHub issues, or ClickUp
+tasks, and a Jira provider comes next. See the
+[releases](https://github.com/uzi0espil/opsx-board/releases) for what changed.
 
 opsx-board is not affiliated with Anthropic or the OpenSpec project.
 

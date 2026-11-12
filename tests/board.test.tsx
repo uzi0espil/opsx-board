@@ -94,6 +94,12 @@ type World = {
   commitMrs: Record<string, object[]>
   /** The last commit that added or changed a file of a change's active folder, by the change's name. */
   activeLogs: Record<string, string>
+  /** Set, `clickup` is not installed: the process cannot start. */
+  isClickupMissing: boolean
+  /** Set, `clickup` is installed but not logged in. */
+  isClickupLoggedOut: boolean
+  /** What `clickup task view <id> --json` gives, by task id; a task it lacks, it cannot read. */
+  clickupTasks: Record<string, object>
 }
 
 /** A merge request as the GitLab API gives it. */
@@ -146,6 +152,9 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     mrViews: {},
     commitMrs: {},
     activeLogs: {},
+    isClickupMissing: false,
+    isClickupLoggedOut: false,
+    clickupTasks: {},
   }
   const listDir = (path: string) => {
     const base = `${norm(path).replace(/\/$/, '')}/`
@@ -259,6 +268,26 @@ function world(on: On, files: Record<string, string>, branch = 'worktree-demo-ch
     const commitMrs = /^glab api projects\/:id\/repository\/commits\/([0-9a-f]{40})\/merge_requests$/.exec(command)
     if (commitMrs) {
       return ran(JSON.stringify(state.commitMrs[commitMrs[1] ?? ''] ?? []))
+    }
+    if (e.argv[0] === 'clickup' && state.isClickupMissing) {
+      return { deny: 'spawn clickup ENOENT' }
+    }
+    if (command === 'clickup version') {
+      return ran('clickup version 0.39.0\n')
+    }
+    // As the CLI does: an array for several ids, without the ones it cannot read; one id it cannot read fails.
+    const viewed = /^clickup task view ([\w -]+) --json$/.exec(command)
+    if (viewed) {
+      if (state.isClickupLoggedOut) {
+        return ran('', 4, "authentication required. Run 'clickup auth login' to authenticate")
+      }
+      const ids = (viewed[1] ?? '').split(' ')
+      const found = ids.flatMap(id => (state.clickupTasks[id] === undefined ? [] : [state.clickupTasks[id]]))
+      if (ids.length === 1) {
+        return found[0] === undefined ? ran('', 1, `failed to fetch task ${ids[0]}: ClickUp API error (HTTP 401)`) : ran(JSON.stringify(found[0]))
+      }
+
+      return ran(JSON.stringify(found))
     }
     const changed = /^git log -1 --diff-filter=AM --format=%H%x09%s -- openspec\/changes\/([\w-]+)$/.exec(command)
     if (changed) {
@@ -1815,6 +1844,120 @@ stages:
     expect((await after.find({ type: 'Text', text: /Explore .* Verify/ }))?.text).toBe('–  Explore › ✔  Propose › ✔  Apply › ✔  Verify')
     expect(await after.find({ key: 'pr' })).toBeUndefined()
     await after.unmount()
+  })
+})
+
+describe('opsx-board with ClickUp tasks', () => {
+  const CU = `${CWD}/openspec/changes/cu-change`
+  const CU_FILES: Record<string, string> = {
+    [`${CU}/.openspec.yaml`]: 'schema: spec-driven\ncreated: 2026-11-01\n',
+    [`${CU}/proposal.md`]: [
+      '## References',
+      '',
+      '- **ClickUp Task:** [9aa1bb2cc](https://app.clickup.com/t/9aa1bb2cc)',
+      '- **Figma Design:** [Wizard mockup](https://www.figma.com/design/abc/Wizard)',
+      '',
+      '## Why',
+      '',
+      '- The scope is https://app.clickup.com/t/9zz0zz0zz, which this change does not close.',
+      '',
+    ].join('\n'),
+    [`${CU}/tasks.md`]: '## 1. Build\n\n- [ ] 1.1 Build the writer\n',
+    '/home/me/.claude/opsx-board/schemas/spec-driven/board.yaml': `version: 1
+stages:
+  - { id: plan, label: ClickUp, collects: work-item, section: References }
+refs:
+  - { kind: work-item, provider: clickup, branch: '^([0-9a-z]{9,13})_' }
+`,
+  }
+  const CU_STATUS = {
+    ...SPEC_DRIVEN_STATUS_JSON,
+    changeName: 'cu-change',
+    isComplete: true,
+    artifacts: SPEC_DRIVEN_STATUS_JSON.artifacts.map(artifact => ({ id: artifact.id, outputPath: artifact.outputPath, requires: artifact.requires, status: 'done' })),
+  }
+  const task = (id: string, name: string, status: string, type: string) => ({
+    id,
+    name,
+    status: { status, type, color: '#000000' },
+    url: `https://app.clickup.com/t/${id}`,
+    markdown_description: `## What & why\n\n${name}, as the scope asks.`,
+    list: { name: 'Backlog' },
+    priority: { priority: 'high' },
+    creator: { username: 'sam' },
+    assignees: [{ username: 'dana' }],
+    date_created: String(Date.UTC(2026, 9, 1)),
+  })
+  const TASKS = {
+    '9aa1bb2cc': task('9aa1bb2cc', 'Persist the label', 'in review', 'custom'),
+    '9dd3ee4ff': task('9dd3ee4ff', 'Add a draft state', 'done', 'done'),
+  }
+
+  async function board($: Parameters<TestBody>[0], on: On, setup: (state: World) => void) {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 10, 12, 9) })
+    const state = world(on, CU_FILES, '9dd3ee4ff_draft-state')
+    state.status = { 'cu-change': CU_STATUS }
+    state.remote = undefined
+    state.clickupTasks = TASKS
+    setup(state)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'fold:plan' })
+
+    return { clock, state, ui }
+  }
+
+  test('with the clickup CLI: the tasks of the proposal and the branch, their names and states, and a task in the reader', async ($, on) => {
+    const { clock, state, ui } = await board($, on, () => undefined)
+    expect((await ui.find({ type: 'Text', text: /Explore .* Archive/ }))?.text).toContain('✔  ClickUp')
+    expect((await ui.find({ key: 'plan:9aa1bb2cc' }))?.text).toBe('[~] 9aa1bb2cc  Persist the label · in review')
+    expect((await ui.find({ key: 'plan:9dd3ee4ff' }))?.text).toBe('[x] 9dd3ee4ff  Add a draft state · done · branch')
+    // A link outside the section, and the Figma link, name no task.
+    expect(await ui.find({ key: 'plan:9zz0zz0zz' })).toBeUndefined()
+    const reads = () => state.runs.filter(run => run.startsWith('clickup task view'))
+    expect(reads()).toEqual(['clickup task view 9aa1bb2cc 9dd3ee4ff --json'])
+    expect(await ui.find({ type: 'Text', text: /^⚠/ })).toBeUndefined()
+
+    // A click shows the task as clickup reads it now, with a button that opens its page.
+    await ui.press({ key: 'plan:9aa1bb2cc' })
+    expect(state.runs.at(-1)).toBe('clickup task view 9aa1bb2cc --json')
+    expect((await ui.find({ type: 'Text', text: /^9aa1bb2cc · / }))?.text).toBe('9aa1bb2cc · Persist the label')
+    const doc = (await ui.find({ key: 'doc' }))?.text ?? ''
+    expect(doc).toContain('**in review** · Backlog · priority high · opened by sam on 2026-10-01 · the proposal links it')
+    expect(doc).toContain('Assigned: dana')
+    expect(doc).toContain('Persist the label, as the scope asks.')
+    await ui.press({ key: 'browser' })
+    expect(state.runs.at(-1)).toBe('xdg-open https://app.clickup.com/t/9aa1bb2cc')
+    await ui.press({ key: 'back' })
+
+    // A refresh within two minutes asks clickup nothing new.
+    await $.command.run(typed('opsx-board', ''))
+    await clock.advance(300)
+    expect(reads()).toHaveLength(2)
+    await ui.unmount()
+  })
+
+  test('without the clickup CLI: each task is a link to its page', async ($, on) => {
+    const { state, ui } = await board($, on, world => {
+      world.isClickupMissing = true
+    })
+    expect((await ui.find({ key: 'plan:9aa1bb2cc' }))?.text).toBe(' ↗  9aa1bb2cc  ClickUp Task')
+    expect((await ui.find({ key: 'plan:9dd3ee4ff' }))?.text).toBe(' ↗  9dd3ee4ff   · branch')
+    expect(await ui.find({ type: 'Text', text: /^⚠/ })).toBeUndefined()
+    await ui.press({ key: 'plan:9aa1bb2cc' })
+    expect(state.runs.at(-1)).toBe('xdg-open https://app.clickup.com/t/9aa1bb2cc')
+    expect(state.toasts.at(-1)).toBe('Opened ClickUp task 9aa1bb2cc')
+    await ui.unmount()
+  })
+
+  test('with the clickup CLI logged out: links, and a warning that says how to log in', async ($, on) => {
+    const { ui } = await board($, on, world => {
+      world.isClickupLoggedOut = true
+    })
+    expect((await ui.find({ type: 'Text', text: /^⚠/ }))?.text).toBe('⚠  ClickUp: clickup is not logged in: run clickup auth login')
+    expect((await ui.find({ key: 'plan:9aa1bb2cc' }))?.text).toBe(' ↗  9aa1bb2cc  ClickUp Task')
+    await ui.unmount()
   })
 })
 
