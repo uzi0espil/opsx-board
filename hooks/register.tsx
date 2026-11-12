@@ -43,8 +43,10 @@ import { prWords } from './hosts'
 import {
   changeFromArgs,
   changeFromBranch,
+  changeOfPath,
   countDone,
   countFindings,
+  createdChanges,
   designFromArgs,
   formatDuration,
   formatTokens,
@@ -247,7 +249,7 @@ async function bind($: Engine, change: string, source: BindingSource): Promise<b
   if (!isChangeName(change)) {
     return false
   }
-  await update($, bindingAtom, b => ({ ...b, change, source, candidates: [] }))
+  await update($, bindingAtom, b => ({ ...b, change, source, candidates: [], query: undefined }))
   await update($, mainAtom, main => {
     const pre = main[PRE_CHANGE]
     if (pre === undefined) {
@@ -294,9 +296,27 @@ async function activeChanges($: Engine, dir: string): Promise<string[]> {
   return found
 }
 
+/**
+ * The changes newest first, by the time of their folder, proposal, or tasks: a change just
+ * created or worked on heads the picker.
+ */
+async function newestFirst($: Engine, dir: string, changes: readonly string[]): Promise<string[]> {
+  const timeOf = async (path: string) => (await $.fs.stat(path).catch(() => undefined))?.mtimeMs ?? 0
+  const times = new Map<string, number>()
+  for (const name of changes) {
+    const base = `${dir}/openspec/changes/${name}`
+    times.set(name, Math.max(await timeOf(base), await timeOf(`${base}/proposal.md`), await timeOf(`${base}/tasks.md`)))
+  }
+
+  return [...changes].sort((a, b) => (times.get(b) ?? 0) - (times.get(a) ?? 0) || a.localeCompare(b))
+}
+
+// The bindings that only a command, a pin, a pick, or the session's own work changes.
+const STICKY: readonly BindingSource[] = ['command', 'pinned', 'pick', 'created', 'written']
+
 async function resolveBinding($: Engine, dir: string): Promise<void> {
   const binding = await read($, bindingAtom)
-  if (binding.source === 'command' || binding.source === 'pinned' || binding.source === 'pick') {
+  if (binding.source !== undefined && STICKY.includes(binding.source)) {
     return
   }
   const changes = await activeChanges($, dir)
@@ -317,7 +337,9 @@ async function resolveBinding($: Engine, dir: string): Promise<void> {
       return
     }
     if (binding.change === undefined || !changes.includes(binding.change)) {
-      await update($, bindingAtom, b => ({ ...b, change: undefined, source: undefined, candidates: changes }))
+      const candidates = await newestFirst($, dir, changes)
+      // Unless the session bound a change meanwhile, by a tool call that ended during this read.
+      await update($, bindingAtom, b => (b.change !== binding.change ? b : { ...b, change: undefined, source: undefined, candidates }))
     }
   }
   // No active change: a bound change stays, so an archived change still shows its end state.
@@ -816,6 +838,25 @@ async function noteAgentResult($: Engine, result: AgentResult, isError: boolean)
   isLedgerDirty = true
 }
 
+/**
+ * Binds the change that the session's own tool call created or wrote, when it is an active
+ * change of the session's folder. A created change replaces any binding but a pin. A written
+ * file binds only a session that has no change yet: a fix in another change moves no binding.
+ */
+async function bindOwnChange($: Engine, names: readonly string[], source: 'created' | 'written'): Promise<boolean> {
+  const binding = await read($, bindingAtom)
+  if (names.length === 0 || binding.source === 'pinned' || (source === 'written' && binding.change !== undefined)) {
+    return false
+  }
+  const active = await activeChanges($, await sessionCwd($))
+  const name = [...names].reverse().find(item => active.includes(item))
+  if (name === undefined || name === binding.change) {
+    return false
+  }
+
+  return bind($, name, source)
+}
+
 async function noteToolUse($: Engine, input: { tool: string; command?: string; file_path?: string; notebook_path?: string }, isError: boolean): Promise<void> {
   if (input.tool === 'Bash' || input.tool === 'PowerShell') {
     const command = input.command ?? ''
@@ -823,12 +864,21 @@ async function noteToolUse($: Engine, input: { tool: string; command?: string; f
       const at = await $.clock.now()
       await update($, liveAtom, live => ({ ...live, isValidateOk: !isError, validateAt: at }))
     }
-    if (/\b(openspec|git|gh|glab|mv|rm)\b/.test(command)) {
-      void refresh($, { isGit: /\bgit\b/.test(command), isPr: /\bgit\s+push\b|\bgh\s+pr\b|\bglab\s+mr\b/.test(command) })
+    // Bound before the refresh, which reads the binding first.
+    const isBound = await bindOwnChange($, createdChanges(command), 'created')
+    if (isBound || /\b(openspec|git|gh|glab|mv|rm)\b/.test(command)) {
+      void refresh($, { isForced: isBound, isGit: isBound || /\bgit\b/.test(command), isPr: /\bgit\s+push\b|\bgh\s+pr\b|\bglab\s+mr\b/.test(command) })
     }
     return
   }
   const path = (input.file_path ?? input.notebook_path ?? '').replace(/\\/g, '/')
+  const written = isError ? undefined : changeOfPath(path)
+  if (written !== undefined && path.toLowerCase().startsWith(`${(await sessionCwd($)).replace(/\\/g, '/').toLowerCase()}/`)) {
+    if (await bindOwnChange($, [written], 'written')) {
+      void refresh($, { isForced: true, isGit: true })
+      return
+    }
+  }
   const hints = await read($, hintsAtom)
   // The files of the hints: the work-item files, and the design folders up to their id.
   const watched = [
@@ -932,6 +982,9 @@ async function drawPane($: Engine, e: RenderInput<'Pane'>) {
       pick: async change => {
         await bind($, change, 'pick')
         $.clock.after(20, () => void refresh($, { isForced: true, isGit: true }))
+      },
+      search: async query => {
+        await update($, bindingAtom, b => ({ ...b, query }))
       },
       read: doc => showDoc($, doc),
       readPlanning: item => showPlanning($, item),

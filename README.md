@@ -51,9 +51,10 @@ The board watches; it does not steer. It reads the `openspec` CLI, the files of 
 `gh`, `glab`, and the events of your session: commands, agents, and tokens. It redraws as they
 change, and it changes no file of the workflow.
 
-Each session follows its own change: the argument of its last `/opsx:` command, else the only
-active change in its folder, else the change its branch names, else the one you pick in the
-pane. It follows the session into a worktree and out of it.
+Each session follows its own change: the argument of its last `/opsx:` command, else the change
+the session creates, else the only active change in its folder, else the change its branch
+names, else the one you pick in the pane, where a search field narrows the list. It follows the
+session into a worktree and out of it.
 
 ## Install
 

@@ -9,7 +9,7 @@ import type { AgentRun, Binding, BoardHints, Flags, Live, MainUsage, Others, Pla
 import { prWords } from './hosts'
 import { PRE_CHANGE, addUsage, agentTokens, sessionUsage, tokensOf } from './ledger'
 import { currentStage, stageText } from './model'
-import { formatDuration, formatTokens, reflowTables } from './parse'
+import { formatDuration, formatTokens, matchChanges, reflowTables } from './parse'
 import { STAGES, flowOf, isHidden, nextStep, stageKind } from './stages'
 import type { PaneContext, StageKind, StageState } from './stages'
 import { groupViews } from './stages/apply'
@@ -41,6 +41,8 @@ export type PaneActions = {
   setFolded: (key: string, isFolded: boolean) => Promise<void>
   setExpanded: (key: string, isExpanded: boolean) => Promise<void>
   pick: (change: string) => Promise<void>
+  /** Keeps the search typed in the picker. */
+  search: (query: string) => Promise<void>
   /** Shows a file or a text in the reader view of the pane. */
   read: (doc: ReaderDoc) => Promise<void>
   /** Shows a planning item as its provider decides: in the reader view, or in the browser. */
@@ -82,6 +84,54 @@ function mainSessionButton($: Engine, e: RenderInput<'Pane'>, Button: Elements['
     >
       ← Main session
     </Button>
+  )
+}
+
+// The most changes the picker lists while a search field can narrow them.
+const MAX_PICK = 12
+
+/**
+ * The active changes to pick from, newest first. Where the surface has a text field, a search
+ * above the list narrows it, Enter picks the first match, and the list shows MAX_PICK rows.
+ */
+function picker($: Engine, e: RenderInput<'Pane'>, binding: Binding, actions: PaneActions) {
+  const elements = $.ui.resolve(e)
+  const { Box, Text, Button } = elements
+  const Input = 'Input' in elements ? elements.Input : undefined
+  const query = binding.query ?? ''
+  const matches = matchChanges(binding.candidates, query)
+  const shown = Input === undefined ? matches : matches.slice(0, MAX_PICK)
+
+  return (
+    <Box flexDirection="column" marginTop={1} paddingLeft={INDENT}>
+      {Input === undefined ? null : (
+        <Box marginBottom={1}>
+          <Input
+            key="pick-search"
+            label="Search "
+            placeholder="part of a change name"
+            value={query}
+            submitLabel="pick"
+            autoFocus
+            onInput={value => void actions.search(value)}
+            onSubmit={value => {
+              const first = matchChanges(binding.candidates, value)[0]
+              if (first !== undefined) {
+                void actions.pick(first)
+              }
+            }}
+          />
+        </Box>
+      )}
+      {shown.map(name => (
+        <Button key={`pick:${name}`} plain onPress={() => void actions.pick(name)}>
+          <Text dimColor>{'○  '}</Text>
+          <Text bold>{name}</Text>
+        </Button>
+      ))}
+      {matches.length > shown.length ? <Text dimColor>{`+${matches.length - shown.length} more · type to narrow`}</Text> : null}
+      {matches.length === 0 ? <Text dimColor>{`No change matches “${query.trim()}”.`}</Text> : null}
+    </Box>
   )
 }
 
@@ -237,16 +287,7 @@ export function renderPane($: Engine, e: RenderInput<'Pane'>, data: PaneData, ac
         </Box>
         {hasPreChangeWork && change === undefined ? rail : null}
         {change === undefined ? exploreSection : null}
-        {binding.candidates.length > 1 ? (
-          <Box flexDirection="column" marginTop={1} paddingLeft={INDENT}>
-            {binding.candidates.map(name => (
-              <Button key={`pick:${name}`} plain onPress={() => void actions.pick(name)}>
-                <Text dimColor>{'○  '}</Text>
-                <Text bold>{name}</Text>
-              </Button>
-            ))}
-          </Box>
-        ) : null}
+        {binding.candidates.length > 1 ? picker($, e, binding, actions) : null}
         {draw(stageKind('design'))}
         {nextCard}
       </Box>

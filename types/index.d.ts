@@ -310,13 +310,23 @@ export type Live = {
  */
 export type ReaderDoc = { title: string; path?: string; text?: string; from?: string; url?: string }
 
-export type BindingSource = 'command' | 'pinned' | 'list' | 'branch' | 'pick'
+/**
+ * How the session found its change: a command's argument, a pin, the only active change, the
+ * branch, a pick in the pane, an `openspec new change` the session ran, or a file the session
+ * wrote in the change.
+ */
+export type BindingSource = 'command' | 'pinned' | 'list' | 'branch' | 'pick' | 'created' | 'written'
 
+/**
+ * `candidates`: the active changes to pick from, newest first. `query`: the search typed in
+ * the picker. Optional for older state.
+ */
 export type Binding = {
   change?: string
   source?: BindingSource
   candidates: string[]
   dismissedFor?: string
+  query?: string
 }
 
 /** The other sessions of the bound change: their tokens, their count, and the phases they spent tokens in. */
