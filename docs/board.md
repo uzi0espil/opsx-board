@@ -77,7 +77,7 @@ Every row acts on a click:
 | Row | Click |
 |-----|-------|
 | Section header | Folds or unfolds the section |
-| Planning item (`WI-12`) | Shows its block of the file that holds it in the reader |
+| Planning item (`WI-12`) | Shows it as its provider reads it, in the reader: a file's item as its block of the file, a GitHub issue or a ClickUp task with its description. A ClickUp task without the `clickup` CLI opens its page in the browser |
 | Design view | Opens its file (`artifact.html`) in the browser; `decisions` opens its decision log in the reader |
 | Artifact (proposal, arch-review, design, tasks) | Opens the file in the reader |
 | `specs` | Lists the spec files; each opens in the reader |
@@ -202,5 +202,5 @@ old folder can be deleted by hand once no session of an older version runs.
 ## What the board reads
 
 The plugin observes the workflow. It reads the `openspec` CLI JSON, the schema and its hints,
-the change files, the files the hints name, git, `gh`, and `glab`, and the session's own agent
-and token events. It changes no workflow file.
+the change files, the files the hints name, git, `gh`, `glab`, and `clickup`, and the session's
+own agent and token events. It changes no workflow file.

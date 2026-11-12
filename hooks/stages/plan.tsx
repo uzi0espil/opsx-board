@@ -39,12 +39,18 @@ export const planStage: StageKind = {
         const mark = item.mark ?? '?'
         // An item that the proposal does not name says where the board found it.
         const via = item.via === 'branch' ? ' · branch' : item.via === 'pr' ? ' · closed by the PR' : ''
+        const after = `${item.note === undefined ? '' : ` · ${item.note}`}${via}`
 
         return (
           <Button key={`plan:${item.id}`} plain onPress={() => void pane.actions.readPlanning(item)}>
-            <Text color={mark === '?' ? 'error' : MARK_COLOR[mark]}>{`[${mark}]`}</Text>
+            {item.isLink === true ? (
+              // An item with no state on the board is a link to its page.
+              <Text dimColor>{' ↗ '}</Text>
+            ) : (
+              <Text color={mark === '?' ? 'error' : MARK_COLOR[mark]}>{`[${mark}]`}</Text>
+            )}
             <Text bold>{` ${item.id}`}</Text>
-            <Text dimColor>{`  ${clip(item.title, Math.max(10, body - item.id.length - via.length - 8))}${via}`}</Text>
+            <Text dimColor>{`  ${clip(item.title, Math.max(10, body - item.id.length - after.length - 8))}${after}`}</Text>
           </Button>
         )
       }),

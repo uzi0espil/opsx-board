@@ -6,6 +6,7 @@
 - [Add stages with board.yaml](#add-stages-with-boardyaml)
 - [Shape the flow](#shape-the-flow)
 - [GitHub issues](#github-issues)
+- [ClickUp tasks](#clickup-tasks)
 - [The check](#the-check)
 
 ## The stages that OpenSpec gives
@@ -156,13 +157,44 @@ A bare `#12` names an issue of the home repository: `repo` of the ref (`owner/na
 repository of the pull request, else the one `gh` finds from the working directory. Without
 `gh`, the issues show `[?]` and a warning.
 
+## ClickUp tasks
+
+A `work-item` ref with `provider: clickup` takes the work items of a change from ClickUp tasks:
+
+```yaml
+stages:
+  - { id: plan, label: ClickUp, collects: work-item, section: References }
+
+refs:
+  - { kind: work-item, provider: clickup, branch: '^([0-9a-z]{9,13})_' }
+```
+
+The board finds the tasks in two places, and shows each task once:
+
+1. The proposal section of the stage: each `https://app.clickup.com/t/<id>` link on a list line
+   of it, such as `- **ClickUp Task:** [9aa1bb2cc](https://app.clickup.com/t/9aa1bb2cc)`. A custom
+   task id links as `/t/<workspace>/<id>`. A prose line names no task.
+2. The branch name, when the ref has a `branch` pattern: its first group, such as `9aa1bb2cc` in
+   `9aa1bb2cc_add-csv-export`. The branch is optional.
+
+With the [`clickup` CLI](https://github.com/triptechtravel/clickup-cli) installed and logged in,
+one `clickup task view <ids> --json` gives each task's name and status. The row shows the
+status beside a mark of its type: `[ ]` not started, `[~]` in progress, `[x]` done or closed.
+The board reads a task again after two minutes, and it shows the first 12 tasks of a change. A
+click shows the task in the reader (its status, list, priority, author, assignees, and
+description), with a button that opens its page.
+
+Without the CLI, each task is a link (`↗`), and a click opens its page in the browser. With the
+CLI not logged in, the tasks are links too, and a warning says to run `clickup auth login`.
+
 ## The check
 
 A `board.yaml` comes with any repository, so the board checks it strictly:
 
-- It names built-in providers only. Version 1 has the `file` and `github` providers. The
-  `github` provider runs `gh issue view` and reads the pull request that the PR stage reads.
-  The file chooses which issues count, never a command. A provider that calls a tool or a
+- It names built-in providers only. Version 1 has the `file`, `github`, and `clickup`
+  providers. The `github` provider runs `gh issue view` and reads the pull request that the PR
+  stage reads. The `clickup` provider runs `clickup version` and `clickup task view`. The file
+  chooses which issues and tasks count, never a command. A provider that calls a tool or a
   command of the file's choice is not built in, and the board ignores a ref that names one.
 - A `repo` must be `owner/name`.
 - Every path stays inside the repository: no absolute path, no drive, and no `..`.

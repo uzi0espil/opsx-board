@@ -11,12 +11,13 @@ import type { Check, Doc } from '../check'
 import { ioOf } from '../io'
 import { section } from '../parse'
 import type { Collected, Opened, ProviderContext, WorkItemProvider } from './base'
+import { clickupProvider } from './clickup'
 import { fileProvider } from './file'
 import { githubProvider } from './github'
 
 // In this order: a line of the proposal belongs to the first provider that names an item in it,
 // and the pane lists each provider's items after the ones of the providers before it.
-const PROVIDERS: readonly WorkItemProvider[] = [fileProvider, githubProvider]
+const PROVIDERS: readonly WorkItemProvider[] = [fileProvider, githubProvider, clickupProvider]
 
 const named = (name: string): WorkItemProvider | undefined => PROVIDERS.find(provider => provider.name === name)
 

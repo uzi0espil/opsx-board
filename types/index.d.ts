@@ -51,6 +51,12 @@ export type PlanningItem = {
   file?: string
   /** The `github` provider: the issue, and what `gh` gave. */
   issue?: IssueRef & { url?: string; state?: string }
+  /** The `clickup` provider: the task's page. */
+  task?: { url: string }
+  /** A word on the item's state, shown after its title, such as a ClickUp status. */
+  note?: string
+  /** The board reads no state for the item: it shows as a link, and a click opens its page. */
+  isLink?: boolean
 }
 
 /** A `file` ref: an ID pattern, the file that holds the items, and the file they move to once resolved. */
@@ -71,7 +77,18 @@ export type GithubRef = {
 }
 
 /** A `work-item` ref of board.yaml, after its provider checked it. A provider adds its own ref type here. */
-export type WorkItemRef = FileRef | GithubRef
+/**
+ * A `clickup` ref: the ClickUp tasks of a change, which the task links of the proposal section
+ * name, and the one the branch name names. The `clickup` CLI, when it is installed, gives each
+ * task's name and status.
+ */
+export type ClickupRef = {
+  provider: 'clickup'
+  /** A pattern whose first group is a task id in the branch name. */
+  branch?: string
+}
+
+export type WorkItemRef = FileRef | GithubRef | ClickupRef
 
 export type PlanHints = {
   label: string
