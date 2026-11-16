@@ -32,6 +32,11 @@ Claude Code seats a pane when it opens it. When a terminal that was too narrow w
 columns in the fullscreen layout, the board closes its pane and opens it again, so that it docks
 beside the transcript.
 
+Close the pane with the `✕` on its frame, or with `/opsx-board close`. On the main screen, the pane
+stays inline at every width, and Claude Code takes no mouse click, so the `✕` does not answer.
+There, close it with `/opsx-board close`, or focus it with `ctrl+x tab` and close it with
+`ctrl+x x`. When `/opsx-board` opens the pane on the main screen, its answer says so.
+
 ## Which change the pane shows
 
 Each session follows its own change. These bind it:

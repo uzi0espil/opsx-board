@@ -625,7 +625,12 @@ async function startSession($: Engine, dir: string): Promise<void> {
   })
 }
 
-async function runBoardCommand($: Engine, arg: string): Promise<string> {
+// On the main screen, Claude Code seats every pane inline and takes no mouse click: the ✕ of
+// the frame does not answer, so the answer of `/opsx-board` says how to close the pane.
+const MAIN_SCREEN_NOTE =
+  'It sits inline above the prompt: on the main screen a pane does not dock, and its ✕ takes no click. Close it with /opsx-board close, or with ctrl+x tab, then ctrl+x x.'
+
+async function runBoardCommand($: Engine, arg: string, isFullscreen: boolean): Promise<string> {
   // The command shows the board itself, also when the pane last showed a document.
   await update($, readerAtom, () => null)
   if (arg === 'close') {
@@ -643,9 +648,12 @@ async function runBoardCommand($: Engine, arg: string): Promise<string> {
   $.clock.after(50, () => void refresh($, { isForced: true, isGit: true, isPr: true }))
   const binding = await read($, bindingAtom)
 
-  return opened.isPlaced
-    ? `OpenSpec pane open${binding.change === undefined ? '' : ` for ${binding.change}`}.`
-    : `OpenSpec pane waits: ${opened.reason}`
+  if (!opened.isPlaced) {
+    return `OpenSpec pane waits: ${opened.reason}`
+  }
+  const open = `OpenSpec pane open${binding.change === undefined ? '' : ` for ${binding.change}`}.`
+
+  return isFullscreen ? open : `${open} ${MAIN_SCREEN_NOTE}`
 }
 
 async function noteSpawn($: Engine, agentId: string, input: { subagentType: string; description: string; prompt: string; background: boolean }, phase: Phase): Promise<void> {
@@ -1123,7 +1131,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: COMMAND }, async ($, e) => ({ text: await runBoardCommand($, e.args.trim()) }))
+  on('command.run', { command: COMMAND }, async ($, e) => ({ text: await runBoardCommand($, e.args.trim(), e.presentation.isFullscreen) }))
 
   // The progress note for the main agent rides on `/opsx:apply` as hidden context, typed or
   // run through the Skill tool. A managed plugin can skip `skill.prompt` hooks, so none is used.
