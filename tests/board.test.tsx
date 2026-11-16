@@ -929,6 +929,19 @@ describe('opsx-board', () => {
     }
   })
 
+  test('on the main screen, the board command says how to close the inline pane', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
+    world(on, DEMO_FILES)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await clock.advance(300)
+    const fullscreen = await $.command.run(typed('opsx-board', ''))
+    expect(fullscreen.text).toBe('OpenSpec pane open for demo-change.')
+    const mainScreen = await $.command.run({ ...typed('opsx-board', ''), presentation: { isFullscreen: false, columns: 200 } })
+    expect(mainScreen.text).toBe(
+      'OpenSpec pane open for demo-change. It sits inline above the prompt: on the main screen a pane does not dock, and its ✕ takes no click. Close it with /opsx-board close, or with ctrl+x tab, then ctrl+x x.',
+    )
+  })
+
   test('a pinned archived change finds the pull request that merged it', async ($, on) => {
     const clock = mock.clock(on, { now: Date.UTC(2026, 9, 22, 20) })
     const state = world(on, DEMO_FILES, 'main')
